@@ -1,12 +1,9 @@
-## GitHub Relay v0.1 — first release
+## GitHub Relay v0.2
 
-- Register repositories with a per-repository fine-grained token; access, write permission and expiry are verified on registration
-- Release by dropping a bundle zip: checks, a preview of added/changed/deleted files, then approval and upload
-- Publish immediately (default) or upload as a draft
-- Upload history per repository, sync with GitHub, and "retry release only" when a commit landed but the release did not
-- Bundle spec document in Korean and English, with copy to clipboard and save as .md
-- Korean / English UI
-- Portable: one exe and one data file, tokens encrypted with your Windows account
-- Requirements: Windows 10/11 64-bit (x64)
+- Bundle spec tab now starts with your first registered repository selected
+- A spec exported without a target repository tells the chat session not to guess the repository and to ask you instead; copying or saving such a spec asks for confirmation first
+- The verification result box and the History status line now follow language changes
+- At startup, GitHub Relay warns about tokens that have expired or expire within 14 days
+- The progress bar moves while a bundle is being checked
 
 _Unofficial tool. Not made, endorsed, or supported by GitHub, Inc._

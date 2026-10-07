@@ -172,12 +172,14 @@ var texts = map[string][2]string{
 	"hist.empty":               {"기록이 없습니다", "No history"},
 
 	// ---- spec page ----
-	"lbl.spec_repo": {"대상 리포지터리", "Target repository"},
-	"spec.none":     {"(지정 안 함)", "(none)"},
-	"btn.copy":      {"클립보드로 복사", "Copy to clipboard"},
-	"btn.save_md":   {".md 파일로 저장…", "Save as .md…"},
-	"msg.copied":    {"규격 문서를 클립보드에 복사했습니다. 채팅 세션에 붙여넣으세요.", "The spec was copied. Paste it into the chat session."},
-	"msg.saved":     {"저장했습니다: %s", "Saved: %s"},
+	"lbl.spec_repo":     {"대상 리포지터리", "Target repository"},
+	"spec.none":         {"(지정 안 함)", "(none)"},
+	"btn.copy":          {"클립보드로 복사", "Copy to clipboard"},
+	"btn.save_md":       {".md 파일로 저장…", "Save as .md…"},
+	"msg.spec_no_repo":  {"대상 리포지터리를 고르지 않았습니다.\n\n이대로 내보내면 문서에 리포 주소 대신 OWNER/REPO 자리표시자가 들어가고, 채팅 세션에는 주소를 사용자에게 물어보라고 안내됩니다.\n\n그대로 진행할까요?", "No target repository is selected.\n\nThe spec will contain the placeholder OWNER/REPO instead of an address, and tells the chat session to ask you for it.\n\nContinue anyway?"},
+	"msg.expiry_notice": {"토큰 만료를 확인하세요:\n\n%s\n\n리포지터리 등록 탭에서 \"토큰 교체\"로 새 토큰을 넣을 수 있습니다.", "Check these tokens:\n\n%s\n\nUse \"Replace token\" on the Repositories tab to enter a new one."},
+	"msg.copied":        {"규격 문서를 클립보드에 복사했습니다. 채팅 세션에 붙여넣으세요.", "The spec was copied. Paste it into the chat session."},
+	"msg.saved":         {"저장했습니다: %s", "Saved: %s"},
 
 	// ---- bundle checks ----
 	"chk.zip_open":          {"zip 파일을 열 수 없습니다: %v", "Cannot open the zip file: %v"},

@@ -45,25 +45,31 @@ func SpecMarkdown(lang string, t *SpecTarget) string {
   "assets": ["dist/%s.exe"]
 }`, SpecVersion, repo, ver, ver, ver, ver, name)
 	if lang == LangKO {
-		return specKO(repo, ver, prev, name, example)
+		return specKO(repo, ver, prev, name, example, t == nil)
 	}
-	return specEN(repo, ver, prev, name, example)
+	return specEN(repo, ver, prev, name, example, t == nil)
 }
 
-func specKO(repo, ver, prev, name, example string) string {
+func specKO(repo, ver, prev, name, example string, unknown bool) string {
 	var b strings.Builder
 	w := func(s string, a ...any) { fmt.Fprintf(&b, s, a...) }
 	w("# GitHub Relay 번들 규격 v%d\n\n", SpecVersion)
 	w("이 문서는 개발 결과물을 GitHub에 올리기 위한 **릴리즈 번들(zip)** 형식이다. ")
 	w("너(채팅 세션)는 GitHub에 직접 접속하거나 토큰을 다루지 않는다. 이 규격대로 zip 파일 하나만 만들어 사용자에게 전달하면, 사용자의 PC에서 GitHub Relay가 검수한 뒤 업로드한다. 규격을 하나라도 어기면 업로드가 거부된다.\n\n")
 	w("## 이번 릴리즈 정보\n\n")
-	w("- 대상 리포지터리: `%s`\n", repo)
-	if prev != "" {
-		w("- 직전 버전: `%s` → 이번 버전은 이보다 높아야 함 (권장: `%s`)\n", prev, ver)
+	if unknown {
+		w("- 대상 리포지터리: **지정되지 않음**. `release.json`의 `repo` 값을 **추측하지 말고**, 작업을 시작하기 전에 사용자에게 GitHub 리포지터리 주소(`소유자/이름`)를 물어볼 것. 이 문서의 `OWNER/REPO`는 자리표시자다.\n")
+		w("- 직전 버전도 알 수 없다. 첫 릴리즈가 아니라면 사용자에게 직전 버전을 확인할 것.\n")
+		w("- 결과물 파일 이름 권장: `<리포 이름>-v<버전>-bundle.zip`\n\n")
 	} else {
-		w("- 첫 릴리즈 (권장 버전: `%s`)\n", ver)
+		w("- 대상 리포지터리: `%s`\n", repo)
+		if prev != "" {
+			w("- 직전 버전: `%s` → 이번 버전은 이보다 높아야 함 (권장: `%s`)\n", prev, ver)
+		} else {
+			w("- 첫 릴리즈 (권장 버전: `%s`)\n", ver)
+		}
+		w("- 결과물 파일 이름 권장: `%s-v%s-bundle.zip`\n\n", name, ver)
 	}
-	w("- 결과물 파일 이름 권장: `%s-v%s-bundle.zip`\n\n", name, ver)
 	w("## 번들 구조\n\n```\n")
 	w("%s-v%s-bundle.zip\n", name, ver)
 	w("├─ release.json             필수. 릴리즈 정보\n")
@@ -114,7 +120,11 @@ func specKO(repo, ver, prev, name, example string) string {
 	w("- `../`나 절대 경로가 들어간 zip 경로\n")
 	w("- 사용자가 요청하지 않은 GitHub Actions 워크플로(`.github/workflows/`) 추가·변경 (추가하면 사용자가 별도로 승인해야 함)\n\n")
 	w("## 제출 전 체크리스트\n\n")
-	w("- [ ] release.json의 repo가 `%s`이고 version이 직전 버전보다 높다\n", repo)
+	if unknown {
+		w("- [ ] release.json의 repo를 사용자에게 확인받은 주소로 적었다 (OWNER/REPO 그대로 두지 않음)\n")
+	} else {
+		w("- [ ] release.json의 repo가 `%s`이고 version이 직전 버전보다 높다\n", repo)
+	}
 	w("- [ ] languages의 모든 언어로 README와 RELEASE_NOTES를 작성했다\n")
 	w("- [ ] README 첫 단락에 만든 목적이 있다\n")
 	w("- [ ] src/에 리포지터리 전체 소스가 들어 있다\n")
@@ -124,20 +134,26 @@ func specKO(repo, ver, prev, name, example string) string {
 	return b.String()
 }
 
-func specEN(repo, ver, prev, name, example string) string {
+func specEN(repo, ver, prev, name, example string, unknown bool) string {
 	var b strings.Builder
 	w := func(s string, a ...any) { fmt.Fprintf(&b, s, a...) }
 	w("# GitHub Relay Bundle Spec v%d\n\n", SpecVersion)
 	w("This document defines the **release bundle (zip)** used to publish your work to GitHub. ")
 	w("You (the chat session) never connect to GitHub or handle tokens. Produce exactly one zip file that follows this spec and hand it to the user; GitHub Relay on the user's PC reviews it and uploads it. Any violation makes the upload fail.\n\n")
 	w("## This release\n\n")
-	w("- Target repository: `%s`\n", repo)
-	if prev != "" {
-		w("- Previous version: `%s` → this version must be higher (suggested: `%s`)\n", prev, ver)
+	if unknown {
+		w("- Target repository: **not specified**. **Do not guess** the `repo` value in `release.json`; ask the user for the GitHub repository (`owner/name`) before you start. `OWNER/REPO` in this document is a placeholder.\n")
+		w("- The previous version is unknown too. Unless this is the first release, ask the user for it.\n")
+		w("- Suggested file name: `<repo name>-v<version>-bundle.zip`\n\n")
 	} else {
-		w("- First release (suggested version: `%s`)\n", ver)
+		w("- Target repository: `%s`\n", repo)
+		if prev != "" {
+			w("- Previous version: `%s` → this version must be higher (suggested: `%s`)\n", prev, ver)
+		} else {
+			w("- First release (suggested version: `%s`)\n", ver)
+		}
+		w("- Suggested file name: `%s-v%s-bundle.zip`\n\n", name, ver)
 	}
-	w("- Suggested file name: `%s-v%s-bundle.zip`\n\n", name, ver)
 	w("## Layout\n\n```\n")
 	w("%s-v%s-bundle.zip\n", name, ver)
 	w("├─ release.json             required. Release information\n")
@@ -188,7 +204,11 @@ func specEN(repo, ver, prev, name, example string) string {
 	w("- Zip paths containing `../` or absolute paths\n")
 	w("- Adding or changing GitHub Actions workflows (`.github/workflows/`) unless the user asked for it (the user must approve them separately)\n\n")
 	w("## Checklist before handing over\n\n")
-	w("- [ ] release.json repo is `%s` and version is higher than the previous one\n", repo)
+	if unknown {
+		w("- [ ] release.json repo is the address the user confirmed (not the OWNER/REPO placeholder)\n")
+	} else {
+		w("- [ ] release.json repo is `%s` and version is higher than the previous one\n", repo)
+	}
 	w("- [ ] README and RELEASE_NOTES exist in every language in languages\n")
 	w("- [ ] The first README paragraph explains why the program exists\n")
 	w("- [ ] src/ contains the complete repository source\n")

@@ -42,6 +42,8 @@ var (
 	pGetDpiForSystem        = user32.NewProc("GetDpiForSystem")
 	pInvalidateRect         = user32.NewProc("InvalidateRect")
 	pRedrawWindow           = user32.NewProc("RedrawWindow")
+	pGetWindowLongPtrW      = user32.NewProc("GetWindowLongPtrW")
+	pSetWindowLongPtrW      = user32.NewProc("SetWindowLongPtrW")
 	pGetDC                  = user32.NewProc("GetDC")
 	pReleaseDC              = user32.NewProc("ReleaseDC")
 	pDrawTextW              = user32.NewProc("DrawTextW")

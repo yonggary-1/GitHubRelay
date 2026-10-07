@@ -79,6 +79,10 @@ type App struct {
 	lblSpecRepo, cbSpecRepo, btnCopy, btnSaveMD, edSpec uintptr
 
 	selRepo int // selection in the repositories list
+
+	resultFn   func() string // result box text, rebuilt when the language changes
+	histFn     func() string // history status text, rebuilt when the language changes
+	specPicked bool          // the user chose the spec target themselves
 }
 
 var app *App
@@ -363,6 +367,7 @@ func runApp() {
 	a.showPage(pgRepos)
 	pShowWindow.Call(a.hwnd, SW_SHOW)
 	pUpdateWindow.Call(a.hwnd)
+	a.post(a.checkExpiry)
 
 	var m MSG
 	for {
@@ -552,7 +557,7 @@ func (a *App) build() {
 
 	// Spec
 	a.lblSpecRepo = a.label(pgSpec, "lbl.spec_repo")
-	a.cbSpecRepo = a.combo(pgSpec, a.refreshSpec)
+	a.cbSpecRepo = a.combo(pgSpec, func() { a.specPicked = true; a.refreshSpec() })
 	a.btnCopy = a.button(pgSpec, "btn.copy", a.onCopySpec)
 	a.btnSaveMD = a.button(pgSpec, "btn.save_md", a.onSaveSpec)
 	a.edSpec = a.create("EDIT", WS_TABSTOP|ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL|WS_VSCROLL, WS_EX_CLIENTEDGE, pgSpec, "", nil)
@@ -642,6 +647,12 @@ func (a *App) applyLanguage() {
 	}
 	if a.statusKey != "" {
 		setText(a.status, a.t(a.statusKey, a.statusArgs...))
+	}
+	if a.resultFn != nil {
+		setText(a.edResult, a.resultFn())
+	}
+	if a.histFn != nil {
+		setText(a.histStatus, a.histFn())
 	}
 	a.layout()
 	redrawAll(a.hwnd)
@@ -964,6 +975,9 @@ func (a *App) refreshCombos() {
 		if cur < 0 || cur >= n {
 			cur = 0
 		}
+		if withNone && !a.specPicked && len(a.store.D.Repos) > 0 {
+			cur = 1 // default to the first registered repository
+		}
 		if n > 0 {
 			send(cb, CB_SETCURSEL, uintptr(cur), 0)
 		}
@@ -1009,9 +1023,9 @@ func (a *App) refreshHistory() {
 		a.histRows = append(a.histRows, h)
 	}
 	if len(r.History) == 0 {
-		setText(a.histStatus, a.t("hist.empty"))
+		a.setHist(func() string { return a.t("hist.empty") })
 	} else {
-		setText(a.histStatus, "")
+		a.setHist(func() string { return "" })
 	}
 	a.updateHistButtons()
 }
@@ -1058,14 +1072,14 @@ func (a *App) verifyAsync(owner, name, token string, done func(*RegisterResult))
 		return
 	}
 	a.setBusy(true)
-	setText(a.edResult, a.t("msg.verifying"))
+	a.setResult(func() string { return a.t("msg.verifying") })
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 		res := VerifyToken(ctx, NewGitHub(token), owner, name)
 		a.post(func() {
 			a.setBusy(false)
-			setText(a.edResult, a.checksText(res.Checks))
+			a.setResult(func() string { return a.checksText(res.Checks) })
 			done(res)
 		})
 	}()
@@ -1096,7 +1110,7 @@ func (a *App) onRegister() {
 	}
 	a.verifyAsync(owner, name, token, func(res *RegisterResult) {
 		if HasFail(res.Checks) {
-			setText(a.edResult, a.checksText(res.Checks)+"\r\n"+a.t("msg.reg_fail"))
+			a.setResult(func() string { return a.checksText(res.Checks) + "\r\n" + a.t("msg.reg_fail") })
 			return
 		}
 		if res.Info != nil && strings.Contains(res.Info.FullName, "/") {
@@ -1110,7 +1124,7 @@ func (a *App) onRegister() {
 		applyVerify(r, res)
 		if held := a.store.TakeArchived(r.Full()); len(held) > 0 {
 			r.History = held
-			setText(a.edResult, getText(a.edResult)+"\r\n"+a.t("msg.held_history", len(held)))
+			a.addResult(func() string { return a.t("msg.held_history", len(held)) })
 		}
 		a.store.D.Repos = append(a.store.D.Repos, r)
 		if !a.save() {
@@ -1119,7 +1133,7 @@ func (a *App) onRegister() {
 		setText(a.edTok, "")
 		a.selRepo = len(a.store.D.Repos) - 1
 		a.refreshAll()
-		setText(a.edResult, getText(a.edResult)+"\r\n"+a.t("msg.reg_ok", r.Full()))
+		a.addResult(func() string { return a.t("msg.reg_ok", r.Full()) })
 	})
 }
 
@@ -1136,7 +1150,7 @@ func (a *App) onReplace() {
 	}
 	a.verifyAsync(r.Owner, r.Name, token, func(res *RegisterResult) {
 		if HasFail(res.Checks) {
-			setText(a.edResult, a.checksText(res.Checks)+"\r\n"+a.t("msg.reg_fail"))
+			a.setResult(func() string { return a.checksText(res.Checks) + "\r\n" + a.t("msg.reg_fail") })
 			return
 		}
 		if err := a.store.SetToken(r, token); err != nil {
@@ -1150,7 +1164,7 @@ func (a *App) onReplace() {
 		if a.save() {
 			setText(a.edTok, "")
 			a.refreshAll()
-			setText(a.edResult, getText(a.edResult)+"\r\n"+a.t("msg.replace_ok", r.Full()))
+			a.addResult(func() string { return a.t("msg.replace_ok", r.Full()) })
 		}
 	})
 }
@@ -1173,7 +1187,7 @@ func (a *App) onVerify() {
 		}
 		if a.save() {
 			a.refreshAll()
-			setText(a.edResult, getText(a.edResult)+"\r\n"+a.t("msg.verify_done", r.Full()))
+			a.addResult(func() string { return a.t("msg.verify_done", r.Full()) })
 		}
 	})
 }
@@ -1272,7 +1286,7 @@ func (a *App) analyze() {
 	a.clearPlan()
 	a.setBusy(true)
 	a.setStatus("st.analyzing")
-	send(a.progress, PBM_SETPOS, 0, 0)
+	a.setMarquee(true)
 	lvClear(a.lvChecks)
 	lvClear(a.lvChanges)
 	setText(a.summary, "")
@@ -1290,6 +1304,7 @@ func (a *App) analyze() {
 			p = Analyze(ctx, NewGitHub(token), cp, b)
 		}
 		a.post(func() {
+			a.setMarquee(false)
 			a.setBusy(false)
 			if path != a.bundlePath {
 				return
@@ -1452,7 +1467,7 @@ func (a *App) onSync() {
 	}
 	cp := &RepoEntry{Owner: r.Owner, Name: r.Name, History: cloneHistory(r.History)}
 	a.setBusy(true)
-	setText(a.histStatus, a.t("msg.verifying"))
+	a.setHist(func() string { return a.t("msg.verifying") })
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
@@ -1462,7 +1477,7 @@ func (a *App) onSync() {
 			if err != nil {
 				k, args := explainAPIError(err)
 				a.refreshHistory()
-				setText(a.histStatus, a.t(k, args...))
+				a.setHist(func() string { return a.t(k, args...) })
 				return
 			}
 			r.History = cp.History
@@ -1476,7 +1491,7 @@ func (a *App) onSync() {
 					n++
 				}
 			}
-			setText(a.histStatus, a.t("msg.synced", n))
+			a.setHist(func() string { return a.t("msg.synced", n) })
 		})
 	}()
 }
@@ -1512,7 +1527,7 @@ func (a *App) onRetry() {
 	cp := *h
 	a.setBusy(true)
 	a.uploading = true
-	setText(a.histStatus, a.t("st.uploading"))
+	a.setHist(func() string { return a.t("st.uploading") })
 	go func() {
 		b := LoadBundle(path, r.Full())
 		RetryRelease(context.Background(), NewGitHub(token), r, &cp, b, func(int, int, string, ...any) {})
@@ -1525,9 +1540,9 @@ func (a *App) onRetry() {
 			a.refreshRepos()
 			a.refreshHistory()
 			if h.Status == StCommitted {
-				setText(a.histStatus, a.t("st.failed", h.ErrorText(a.lang)))
+				a.setHist(func() string { return a.t("st.failed", h.ErrorText(a.lang)) })
 			} else {
-				setText(a.histStatus, a.t("st.done", h.ReleaseURL))
+				a.setHist(func() string { return a.t("st.done", h.ReleaseURL) })
 			}
 		})
 	}()
@@ -1536,12 +1551,18 @@ func (a *App) onRetry() {
 // ---------- spec actions ----------
 
 func (a *App) onCopySpec() {
+	if comboRepo(a, a.cbSpecRepo, 1) == nil && !a.ask(a.t("msg.spec_no_repo")) {
+		return
+	}
 	if setClipboard(a.hwnd, strings.ReplaceAll(a.specText(), "\n", "\r\n")) {
 		a.info(a.t("msg.copied"))
 	}
 }
 
 func (a *App) onSaveSpec() {
+	if comboRepo(a, a.cbSpecRepo, 1) == nil && !a.ask(a.t("msg.spec_no_repo")) {
+		return
+	}
 	name := "GitHubRelay-bundle-spec-" + a.lang + ".md"
 	if r := comboRepo(a, a.cbSpecRepo, 1); r != nil {
 		name = r.Name + "-bundle-spec-" + a.lang + ".md"
@@ -1569,4 +1590,58 @@ func shortHint(h string) string {
 		return h[i:]
 	}
 	return h
+}
+
+func (a *App) setResult(f func() string) {
+	a.resultFn = f
+	setText(a.edResult, f())
+}
+
+func (a *App) addResult(f func() string) {
+	prev := a.resultFn
+	if prev == nil {
+		a.setResult(f)
+		return
+	}
+	a.setResult(func() string { return prev() + "\r\n" + f() })
+}
+
+func (a *App) setHist(f func() string) {
+	a.histFn = f
+	setText(a.histStatus, f())
+}
+
+// setMarquee switches the progress bar between a moving "busy" bar and a normal bar.
+func (a *App) setMarquee(on bool) {
+	const pbsMarquee, pbmSetMarquee = 0x8, 0x40A
+	gwlStyle := ^uintptr(15) // -16
+	st, _, _ := pGetWindowLongPtrW.Call(a.progress, gwlStyle)
+	if on {
+		pSetWindowLongPtrW.Call(a.progress, gwlStyle, st|pbsMarquee)
+		send(a.progress, pbmSetMarquee, 1, 30)
+		return
+	}
+	send(a.progress, pbmSetMarquee, 0, 0)
+	pSetWindowLongPtrW.Call(a.progress, gwlStyle, st&^pbsMarquee)
+	send(a.progress, PBM_SETRANGE32, 0, 1000)
+	send(a.progress, PBM_SETPOS, 0, 0)
+}
+
+// checkExpiry warns once at startup about tokens that expired or expire within 14 days.
+func (a *App) checkExpiry() {
+	var lines []string
+	for _, r := range a.store.D.Repos {
+		st, exp := a.store.Status(r, time.Now())
+		if st != TSExpiring && st != TSExpired {
+			continue
+		}
+		key := "ts.expiring"
+		if st == TSExpired {
+			key = "ts.expired"
+		}
+		lines = append(lines, fmt.Sprintf("• %s — %s (%s)", r.Full(), a.t(key), exp.Local().Format("2006-01-02")))
+	}
+	if len(lines) > 0 {
+		a.warn(a.t("msg.expiry_notice", strings.Join(lines, "\n")))
+	}
 }

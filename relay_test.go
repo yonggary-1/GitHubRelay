@@ -365,6 +365,18 @@ func TestSpecAndTexts(t *testing.T) {
 			t.Fatal("format error in spec")
 		}
 	}
+	for _, lang := range []string{LangKO, LangEN} {
+		s := SpecMarkdown(lang, nil)
+		if !strings.Contains(s, "OWNER/REPO") || strings.Contains(s, "%!") {
+			t.Fatal("spec without target")
+		}
+	}
+	if !strings.Contains(SpecMarkdown(LangKO, nil), "추측하지 말고") || !strings.Contains(SpecMarkdown(LangEN, nil), "Do not guess") {
+		t.Fatal("no-guess instruction missing")
+	}
+	if strings.Contains(SpecMarkdown(LangEN, &SpecTarget{Repo: "me/app", Next: "0.1"}), "Do not guess") {
+		t.Fatal("no-guess instruction shown with a target")
+	}
 	// Every text renders without format errors in both languages.
 	for k, v := range texts {
 		for i, s := range v {
