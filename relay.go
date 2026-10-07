@@ -38,6 +38,8 @@ type Plan struct {
 	Unchanged int
 	Checks    []Check // remote checks
 	Latest    string  // highest released version on GitHub, "" if none
+	RepoID    int64   // GitHub repository id
+	RenamedTo string  // set when GitHub reports a different current owner/name
 	RepoURL   string
 }
 
@@ -101,6 +103,13 @@ func Analyze(ctx context.Context, gh *GitHub, r *RepoEntry, b *Bundle) *Plan {
 	if err != nil {
 		k, a := explainAPIError(err)
 		p.add(Fail, k, a...)
+		return p
+	}
+	p.RepoID = info.ID
+	if info.FullName != "" && !SameRepo(info.FullName, r.Full()) {
+		// The repository was renamed or transferred; GitHub answered through a redirect.
+		p.RenamedTo = info.FullName
+		p.add(Fail, "chk.renamed", r.Full(), info.FullName)
 		return p
 	}
 	if info.Archived {
@@ -489,6 +498,10 @@ func VerifyToken(ctx context.Context, gh *GitHub, owner, name string) *RegisterR
 	}
 	res.Info = info
 	add(Pass, "reg.access_ok", info.FullName)
+	// After a rename, continue with the current name instead of relying on redirects.
+	if o, n, err := ParseRepo(info.FullName); err == nil {
+		owner, name = o, n
+	}
 	if t, ok := ParseTokenExpiry(info.TokenExpires); ok {
 		res.Expires = t
 		if time.Until(t) < 0 {

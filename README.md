@@ -54,6 +54,10 @@ GitHub → Settings → Developer settings → Fine-grained tokens → Generate 
 
 The bundle is treated as a full snapshot: files that are not in the bundle are removed from the repository. GitHub Relay never force-pushes; if the branch changed after the check, the upload stops without changing anything.
 
+## Renaming a repository
+
+If you rename or transfer a repository on GitHub, GitHub Relay notices it on the next check or verification and offers to update the registration. The token, history and settings are kept. You can also type the new address and press **Change address** on the Repositories tab; this only works for the same repository. Bundles that still use the former name are accepted with a warning.
+
 ## Building from source
 
 Requires Go 1.23 or newer. On any OS:

@@ -333,6 +333,73 @@ func TestPeekRepo(t *testing.T) {
 	}
 }
 
+func TestRename(t *testing.T) {
+	ctx := context.Background()
+	f := newFake("me", "app")
+	defer f.srv.Close()
+	gh := f.client()
+	s := &Store{P: nopProt{}}
+	r := &RepoEntry{Owner: "me", Name: "app"}
+	s.D.Repos = []*RepoEntry{r}
+	s.D.LastRepo = "me/app"
+
+	h := Upload(ctx, gh, Analyze(ctx, gh, r, LoadBundleBytes(makeZip(t, goodBundle("me/app", "0.1")), "me/app")), false, noProg)
+	if h.Status != StSuccess {
+		t.Fatal(h.ErrorText("en"))
+	}
+	r.History = append(r.History, h)
+
+	// Rename on "GitHub".
+	f.mu.Lock()
+	f.former, f.name = "app", "app2"
+	f.mu.Unlock()
+
+	// Analysis under the old name stops and reports the new name.
+	p := Analyze(ctx, gh, r, LoadBundleBytes(makeZip(t, goodBundle("me/app", "0.2")), r.Full(), r.FormerNames...))
+	fl, _ := levels(p.Checks)
+	if p.RenamedTo != "me/app2" || p.RepoID != 4242 || strings.Join(fl, ",") != "chk.renamed" {
+		t.Fatalf("rename not detected: %q %d %v", p.RenamedTo, p.RepoID, fl)
+	}
+	// Verification under the old name works and continues with the new name (writes too).
+	reg := VerifyToken(ctx, gh, "me", "app")
+	if reg.State != TokOK || reg.Info.FullName != "me/app2" || reg.Info.ID != 4242 {
+		fl, _ := levels(reg.Checks)
+		t.Fatalf("verify after rename: %s %v", reg.State, fl)
+	}
+
+	// Follow the rename: token and history stay, former name is remembered.
+	if err := s.Rename(r, "me/app2"); err != nil {
+		t.Fatal(err)
+	}
+	if r.Full() != "me/app2" || !r.KnownAs("me/app") || s.D.LastRepo != "me/app2" || len(r.History) != 1 {
+		t.Fatalf("rename state: %s %v %s", r.Full(), r.FormerNames, s.D.LastRepo)
+	}
+
+	// A bundle that still says the old name is accepted with a warning.
+	b := LoadBundleBytes(makeZip(t, goodBundle("me/app", "0.2")), r.Full(), r.FormerNames...)
+	fl, wl := levels(b.Checks)
+	if len(fl) > 0 || strings.Join(wl, ",") != "chk.repo_former" {
+		t.Fatalf("former-name bundle: %v %v", fl, wl)
+	}
+	p = Analyze(ctx, gh, r, b)
+	if !p.CanUpload() || !p.NeedsWarnApproval() || p.Latest != "0.1" {
+		fl, _ := levels(p.AllChecks())
+		t.Fatalf("analyze after rename: %v latest=%s", fl, p.Latest)
+	}
+	if h := Upload(ctx, gh, p, false, noProg); h.Status != StSuccess {
+		t.Fatal(h.ErrorText("en"))
+	}
+	// An unrelated repository name is still rejected.
+	if fl, _ := levels(LoadBundleBytes(makeZip(t, goodBundle("me/other", "0.3")), r.Full(), r.FormerNames...).Checks); len(fl) == 0 {
+		t.Fatal("unrelated repo accepted")
+	}
+	// Renaming back drops the duplicate from the former names.
+	s.Rename(r, "me/app")
+	if strings.Join(r.FormerNames, ",") != "me/app2" {
+		t.Fatal(r.FormerNames)
+	}
+}
+
 func TestStore(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "GithubRelay.dat")

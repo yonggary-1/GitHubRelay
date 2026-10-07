@@ -61,7 +61,9 @@ type HistoryEntry struct {
 type RepoEntry struct {
 	Owner        string          `json:"owner"`
 	Name         string          `json:"name"`
-	Branch       string          `json:"branch,omitempty"` // empty = repository default
+	Branch       string          `json:"branch,omitempty"`       // empty = repository default
+	RepoID       int64           `json:"repo_id,omitempty"`      // GitHub's permanent repository id
+	FormerNames  []string        `json:"former_names,omitempty"` // previous owner/name, newest last
 	TokenEnc     string          `json:"token_enc"`
 	TokenHint    string          `json:"token_hint"`
 	TokenExpires string          `json:"token_expires,omitempty"` // RFC3339
@@ -297,4 +299,44 @@ func (s *Store) TakeArchived(full string) []*HistoryEntry {
 	h := s.D.Archived[k]
 	delete(s.D.Archived, k)
 	return h
+}
+
+// Names returns the current name followed by former names.
+func (r *RepoEntry) Names() []string {
+	return append([]string{r.Full()}, r.FormerNames...)
+}
+
+// KnownAs reports whether full is the current or a former name of this repository.
+func (r *RepoEntry) KnownAs(full string) bool {
+	for _, n := range r.Names() {
+		if SameRepo(n, full) {
+			return true
+		}
+	}
+	return false
+}
+
+// Rename moves the registration to a new owner/name, keeping token and history.
+func (s *Store) Rename(r *RepoEntry, newFull string) error {
+	owner, name, err := ParseRepo(newFull)
+	if err != nil {
+		return err
+	}
+	old := r.Full()
+	if SameRepo(old, newFull) {
+		r.Owner, r.Name = owner, name // case change only
+		return nil
+	}
+	keep := []string{}
+	for _, n := range r.FormerNames {
+		if !SameRepo(n, newFull) && !SameRepo(n, old) {
+			keep = append(keep, n)
+		}
+	}
+	r.FormerNames = append(keep, old)
+	r.Owner, r.Name = owner, name
+	if SameRepo(s.D.LastRepo, old) {
+		s.D.LastRepo = r.Full()
+	}
+	return nil
 }

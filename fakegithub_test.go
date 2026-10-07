@@ -22,6 +22,7 @@ type fakeGitHub struct {
 	readOnly bool
 	owner    string
 	name     string
+	former   string // old repository name that still redirects (GET only)
 	branch   string
 	blobs    map[string][]byte
 	trees    map[string][]TreeEntry
@@ -87,6 +88,22 @@ func (f *fakeGitHub) handle(w http.ResponseWriter, r *http.Request) {
 		f.errOut(w, 401, "Bad credentials")
 		return
 	}
+	if f.former != "" {
+		op := "/repos/" + f.owner + "/" + f.former
+		if r.URL.Path == op || strings.HasPrefix(r.URL.Path, op+"/") {
+			if r.Method != "GET" {
+				// Writes through an old name must never be relied on.
+				f.errOut(w, 404, "Not Found (old name)")
+				return
+			}
+			u := "/repos/" + f.owner + "/" + f.name + strings.TrimPrefix(r.URL.Path, op)
+			if r.URL.RawQuery != "" {
+				u += "?" + r.URL.RawQuery
+			}
+			http.Redirect(w, r, u, http.StatusMovedPermanently)
+			return
+		}
+	}
 	prefix := "/repos/" + f.owner + "/" + f.name
 	p := r.URL.Path
 	if !strings.HasPrefix(p, prefix) {
@@ -104,7 +121,7 @@ func (f *fakeGitHub) handle(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case p == "" && r.Method == "GET":
 		w.Header().Set("GitHub-Authentication-Token-Expiration", "2099-01-01 00:00:00 UTC")
-		f.jsonOut(w, 200, map[string]any{"full_name": f.owner + "/" + f.name, "default_branch": f.branch, "html_url": "https://github.com/x"})
+		f.jsonOut(w, 200, map[string]any{"id": 4242, "full_name": f.owner + "/" + f.name, "default_branch": f.branch, "html_url": "https://github.com/x"})
 	case p == "/commits":
 		if empty {
 			f.errOut(w, 409, "Git Repository is empty.")

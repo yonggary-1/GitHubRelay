@@ -56,9 +56,9 @@ type App struct {
 	title, radKO, radEN, tab, disclaimer, btnAbout uintptr
 
 	// repositories page
-	lvRepos, lblURL, edURL, lblTok, edTok, lblBr, edBr                       uintptr
-	btnRegister, btnReplace, btnVerify, btnRemove, btnOpenRepo, btnTokenPage uintptr
-	guide, edResult                                                          uintptr
+	lvRepos, lblURL, edURL, lblTok, edTok, lblBr, edBr                                    uintptr
+	btnRegister, btnReplace, btnVerify, btnRemove, btnOpenRepo, btnTokenPage, btnEditAddr uintptr
+	guide, edResult                                                                       uintptr
 
 	// release page
 	lblRelRepo, lvRelRepos, btnBrowse, btnReanalyze, btnReset, dropFrame, dropMsg, summary uintptr
@@ -498,6 +498,7 @@ func (a *App) build() {
 	a.btnReplace = a.button(pgRepos, "btn.replace", a.onReplace)
 	a.btnVerify = a.button(pgRepos, "btn.verify", a.onVerify)
 	a.btnRemove = a.button(pgRepos, "btn.remove", a.onRemove)
+	a.btnEditAddr = a.button(pgRepos, "btn.edit_addr", a.onEditAddress)
 	a.btnOpenRepo = a.button(pgRepos, "btn.openrepo", func() {
 		if r := a.selectedRepo(); r != nil {
 			openURL(r.URL())
@@ -748,7 +749,7 @@ func (a *App) layout() {
 		for _, b := range []struct {
 			h uintptr
 			k string
-		}{{a.btnRegister, "btn.register"}, {a.btnReplace, "btn.replace"}, {a.btnVerify, "btn.verify"}, {a.btnRemove, "btn.remove"}, {a.btnOpenRepo, "btn.openrepo"}, {a.btnTokenPage, "btn.tokenpage"}} {
+		}{{a.btnRegister, "btn.register"}, {a.btnReplace, "btn.replace"}, {a.btnVerify, "btn.verify"}, {a.btnEditAddr, "btn.edit_addr"}, {a.btnRemove, "btn.remove"}, {a.btnOpenRepo, "btn.openrepo"}, {a.btnTokenPage, "btn.tokenpage"}} {
 			btns = append(btns, item{b.h, a.btnW(b.k)})
 		}
 		// measure button rows by dry-run
@@ -880,7 +881,7 @@ func (a *App) ask(s string) bool {
 
 func (a *App) setBusy(b bool) {
 	a.busy = b
-	for _, h := range []uintptr{a.btnRegister, a.btnReplace, a.btnVerify, a.btnRemove, a.btnBrowse, a.btnReanalyze, a.btnReset, a.btnSync, a.btnRetry, a.lvRelRepos, a.radKO, a.radEN} {
+	for _, h := range []uintptr{a.btnRegister, a.btnReplace, a.btnVerify, a.btnEditAddr, a.btnRemove, a.btnBrowse, a.btnReanalyze, a.btnReset, a.btnSync, a.btnRetry, a.lvRelRepos, a.radKO, a.radEN} {
 		enable(h, !b)
 	}
 	if !b {
@@ -969,7 +970,7 @@ func (a *App) refreshRepos() {
 
 func (a *App) updateRepoButtons() {
 	has := a.selectedRepo() != nil && !a.busy
-	for _, h := range []uintptr{a.btnReplace, a.btnVerify, a.btnRemove, a.btnOpenRepo} {
+	for _, h := range []uintptr{a.btnReplace, a.btnVerify, a.btnEditAddr, a.btnRemove, a.btnOpenRepo} {
 		enable(h, has)
 	}
 	enable(a.btnRegister, !a.busy)
@@ -1097,6 +1098,9 @@ func (a *App) verifyAsync(owner, name, token string, done func(*RegisterResult))
 }
 
 func applyVerify(r *RepoEntry, res *RegisterResult) {
+	if res.Info != nil && res.Info.ID != 0 && r.RepoID == 0 {
+		r.RepoID = res.Info.ID
+	}
 	r.TokenState = res.State
 	r.LastCheck = now()
 	if !res.Expires.IsZero() {
@@ -1172,6 +1176,7 @@ func (a *App) onReplace() {
 		if b := strings.TrimSpace(getText(a.edBr)); b != r.Branch {
 			r.Branch = b
 		}
+		a.offerRename(r, res)
 		if a.save() {
 			setText(a.edTok, "")
 			a.refreshAll()
@@ -1196,6 +1201,7 @@ func (a *App) onVerify() {
 		if b := strings.TrimSpace(getText(a.edBr)); b != r.Branch {
 			r.Branch = b
 		}
+		a.offerRename(r, res)
 		if a.save() {
 			a.refreshAll()
 			a.addResult(func() string { return a.t("msg.verify_done", r.Full()) })
@@ -1288,7 +1294,7 @@ func (a *App) loadBundle(p string) {
 	}
 	if repo := PeekRepo(p); repo != "" {
 		for i, r := range a.store.D.Repos {
-			if SameRepo(r.Full(), repo) && i != a.relIdx {
+			if r.KnownAs(repo) && i != a.relIdx {
 				a.autoSel = true
 				lvSelect(a.lvRelRepos, i)
 				a.autoSel = false
@@ -1407,9 +1413,9 @@ func (a *App) analyze() {
 	lvClear(a.lvChanges)
 	setText(a.summary, "")
 	// Work on a copy so the background task never touches live data.
-	cp := &RepoEntry{Owner: r.Owner, Name: r.Name, Branch: r.Branch, History: cloneHistory(r.History)}
+	cp := &RepoEntry{Owner: r.Owner, Name: r.Name, Branch: r.Branch, History: cloneHistory(r.History), FormerNames: append([]string(nil), r.FormerNames...)}
 	go func() {
-		b := LoadBundle(path, cp.Full())
+		b := LoadBundle(path, cp.Full(), cp.FormerNames...)
 		var p *Plan
 		if err != nil {
 			p = &Plan{Bundle: b, Owner: cp.Owner, Name: cp.Name}
@@ -1427,6 +1433,15 @@ func (a *App) analyze() {
 			}
 			a.plan = p
 			a.renderPlan()
+			if p.RepoID != 0 && r.RepoID == 0 {
+				r.RepoID = p.RepoID
+				a.save()
+			}
+			if p.RenamedTo != "" && a.ask(a.t("msg.renamed_q", r.Full(), p.RenamedTo)) {
+				if a.applyRename(r, p.RenamedTo) {
+					a.analyze()
+				}
+			}
 		})
 	}()
 }
@@ -1768,3 +1783,80 @@ func (a *App) checkExpiry() {
 }
 
 var tabKeys = []string{"tab.release", "tab.history", "tab.spec", "tab.repos"}
+
+// offerRename asks to follow a rename that verification revealed.
+func (a *App) offerRename(r *RepoEntry, res *RegisterResult) {
+	if res.Info == nil || res.Info.FullName == "" || SameRepo(res.Info.FullName, r.Full()) {
+		return
+	}
+	if a.ask(a.t("msg.renamed_q", r.Full(), res.Info.FullName)) {
+		a.applyRename(r, res.Info.FullName)
+	}
+}
+
+// applyRename changes the registered address, keeping token and history.
+func (a *App) applyRename(r *RepoEntry, newFull string) bool {
+	if other := a.store.Find(newFull); other != nil && other != r {
+		a.warn(a.t("msg.addr_taken", newFull))
+		return false
+	}
+	old := r.Full()
+	if err := a.store.Rename(r, newFull); err != nil {
+		a.warn(a.t("msg.url_invalid"))
+		return false
+	}
+	if !a.save() {
+		return false
+	}
+	a.refreshAll()
+	if a.selectedRepo() == r {
+		setText(a.edURL, r.URL())
+	}
+	nf := r.Full()
+	a.addResult(func() string { return a.t("msg.renamed_done", old, nf) })
+	return true
+}
+
+// onEditAddress changes the address of the selected registration to the URL in the form.
+// Only the same repository (by GitHub id) is accepted, so history stays truthful.
+func (a *App) onEditAddress() {
+	r := a.selectedRepo()
+	if r == nil {
+		a.warn(a.t("msg.select_repo"))
+		return
+	}
+	owner, name, err := ParseRepo(getText(a.edURL))
+	if err != nil {
+		a.warn(a.t("msg.url_invalid"))
+		return
+	}
+	newFull := owner + "/" + name
+	if newFull == r.Full() {
+		a.info(a.t("msg.addr_same"))
+		return
+	}
+	if other := a.store.Find(newFull); other != nil && other != r {
+		a.warn(a.t("msg.addr_taken", newFull))
+		return
+	}
+	token, err := a.store.Token(r)
+	if err != nil {
+		a.warn(a.t("msg.need_token"))
+		return
+	}
+	a.verifyAsync(owner, name, token, func(res *RegisterResult) {
+		if res.Info == nil {
+			a.setResult(func() string { return a.checksText(res.Checks) + "\r\n" + a.t("msg.reg_fail") })
+			return
+		}
+		if r.RepoID != 0 && res.Info.ID != 0 && res.Info.ID != r.RepoID {
+			a.warn(a.t("msg.addr_other_repo", res.Info.FullName))
+			return
+		}
+		if r.RepoID == 0 && !a.ask(a.t("msg.addr_unknown_id", r.Full(), res.Info.FullName)) {
+			return
+		}
+		applyVerify(r, res)
+		a.applyRename(r, res.Info.FullName)
+	})
+}

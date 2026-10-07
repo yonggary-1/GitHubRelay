@@ -148,7 +148,7 @@ func cleanZipName(name string) (string, bool) {
 
 // LoadBundle reads a bundle zip fully in memory (never extracting to disk) and runs local checks.
 // expectRepo is "owner/name" of the repository the user selected.
-func LoadBundle(zipPath string, expectRepo string) *Bundle {
+func LoadBundle(zipPath string, expectRepo string, formerNames ...string) *Bundle {
 	b := &Bundle{FilePath: zipPath}
 	zr, err := zip.OpenReader(zipPath)
 	if err != nil {
@@ -160,12 +160,12 @@ func LoadBundle(zipPath string, expectRepo string) *Bundle {
 	if !ok {
 		return b
 	}
-	validate(b, files, expectRepo)
+	validate(b, files, expectRepo, formerNames)
 	return b
 }
 
 // LoadBundleBytes is LoadBundle for in-memory data (used by tests).
-func LoadBundleBytes(data []byte, expectRepo string) *Bundle {
+func LoadBundleBytes(data []byte, expectRepo string, formerNames ...string) *Bundle {
 	b := &Bundle{FilePath: "(memory)"}
 	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
@@ -176,7 +176,7 @@ func LoadBundleBytes(data []byte, expectRepo string) *Bundle {
 	if !ok {
 		return b
 	}
-	validate(b, files, expectRepo)
+	validate(b, files, expectRepo, formerNames)
 	return b
 }
 
@@ -298,7 +298,7 @@ func docName(base string, langs []string, i int) string {
 	return base + "." + langs[i] + ".md"
 }
 
-func validate(b *Bundle, files map[string][]byte, expectRepo string) {
+func validate(b *Bundle, files map[string][]byte, expectRepo string, formerNames []string) {
 	// --- release.json ---
 	raw, ok := files["release.json"]
 	if !ok {
@@ -323,7 +323,17 @@ func validate(b *Bundle, files map[string][]byte, expectRepo string) {
 	} else if _, _, err := ParseRepo(m.Repo); err != nil {
 		fail("chk.repo_invalid", m.Repo)
 	} else if !SameRepo(m.Repo, expectRepo) {
-		fail("chk.repo_mismatch", m.Repo, expectRepo)
+		former := false
+		for _, n := range formerNames {
+			if SameRepo(m.Repo, n) {
+				former = true
+			}
+		}
+		if former {
+			b.add(Warn, "chk.repo_former", m.Repo, expectRepo)
+		} else {
+			fail("chk.repo_mismatch", m.Repo, expectRepo)
+		}
 	}
 	if strings.TrimSpace(m.Version) == "" {
 		fail("chk.field_missing", "version")
