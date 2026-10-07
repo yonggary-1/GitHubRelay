@@ -1,0 +1,4 @@
+*.exe
+GithubRelay.dat
+.GithubRelay-*.tmp
+*.zip

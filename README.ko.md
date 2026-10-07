@@ -1,0 +1,69 @@
+[English](README.md) | 한국어
+
+> [!WARNING]
+> **비공식 도구입니다.** GitHub Relay는 GitHub, Inc.가 만들거나 보증·지원하는 프로그램이 아닙니다. "GitHub"은 GitHub, Inc.의 상표입니다.
+
+# GitHub Relay
+
+GitHub Relay는 AI 채팅 세션에서 개발한 프로젝트를, **GitHub 토큰을 채팅 세션에 넘기지 않고** 안전하게 GitHub에 올리기 위해 만든 프로그램입니다. 채팅 세션은 GitHub에 접속하지 못하는 경우가 많고, 채팅에 붙여넣은 토큰은 나중에 유출되어 악용될 위험이 있습니다. GitHub Relay를 쓰면 채팅 세션은 정해진 규격의 릴리즈 번들(zip)만 만들고, 이 프로그램이 내 PC에서 검수한 뒤 GitHub에 커밋과 릴리즈를 만듭니다. 토큰은 내 PC 밖으로 나가지 않습니다.
+
+프로젝트 페이지: https://github.com/yonggary-1/GitHubRelay
+
+## 사용 흐름
+
+1. 그 리포지터리 하나에만 쓸 수 있는 fine-grained 토큰으로 **리포지터리를 등록**합니다.
+2. 프로그램에서 **번들 규격 문서**를 복사해 채팅 세션에 붙여넣습니다.
+3. 채팅 세션이 프로젝트를 빌드하고 번들 zip을 줍니다.
+4. zip을 GitHub Relay에 **끌어다 놓습니다**. 검수 결과와 함께 추가·수정·삭제될 파일이 정확히 표시됩니다.
+5. **승인하고 업로드**를 누르면 커밋, 릴리즈, 첨부 파일이 만들어집니다.
+
+## 요구 사양
+
+- Windows 10 또는 Windows 11, 64비트(x64)
+- 설치할 것 없음: .NET, Visual C++ 런타임, git 모두 필요 없음
+- 지원하지 않음: Windows 7, 8, 8.1
+
+## 파일 구성
+
+GitHub Relay는 포터블 프로그램입니다. `GithubRelay.exe`를 쓰기 가능한 폴더(예: 문서, 바탕 화면. Program Files는 안 됨)에 두세요. 실행하면 옆에 파일이 하나 더 생깁니다.
+
+| 파일 | 내용 |
+| --- | --- |
+| `GithubRelay.exe` | 프로그램 |
+| `GithubRelay.dat` | 설정, 등록된 리포지터리, 암호화된 토큰, 업로드 기록 |
+
+토큰은 Windows 계정 기반 암호화(DPAPI)로 저장됩니다. 두 파일을 다른 PC로 옮기면 모든 것이 그대로지만 토큰만 다시 입력해야 합니다.
+
+## 토큰 발급
+
+GitHub → Settings → Developer settings → Fine-grained tokens → Generate new token
+
+- Repository access: **Only select repositories**에서 리포지터리 하나만 선택
+- Permissions: **Contents → Read and write** (그 외 권한 불필요)
+- Expiration: 반드시 만료일 설정
+
+## 업로드 전에 검수하는 항목
+
+- 필수 파일: `release.json`, 지정한 모든 언어의 README와 릴리즈 노트, `src/`
+- 번들의 대상이 선택한 리포지터리와 같은지, 버전이 직전 릴리즈보다 높은지
+- 위험한 zip 경로(`../`, 절대 경로)가 없는지
+- 비밀 정보(GitHub 토큰, API 키, 개인키, `.env` 파일)가 없는지
+- `release.json`에 적힌 첨부 파일이 실제로 있는지
+- GitHub Actions 워크플로 변경은 별도 승인 필요
+- 파일을 많이 삭제하거나 아주 큰 파일이 있으면 경고
+
+번들은 리포지터리 전체 스냅샷으로 취급되어, 번들에 없는 파일은 리포지터리에서 삭제됩니다. GitHub Relay는 강제 푸시를 하지 않으며, 검수 이후 브랜치가 바뀌었으면 아무것도 바꾸지 않고 중단합니다.
+
+## 소스에서 빌드
+
+Go 1.23 이상이 필요합니다. 어느 OS에서나:
+
+```
+GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -H windowsgui" -o GithubRelay.exe .
+```
+
+`rsrc_windows_amd64.syso`에는 아이콘, 매니페스트, 버전 정보가 들어 있으며, 다시 만드는 방법은 `build.sh`에 있습니다. `go test ./...`로 핵심 기능 테스트를 실행할 수 있습니다 (로컬 가짜 GitHub 서버 사용).
+
+## 라이선스
+
+MIT 라이선스. [LICENSE](LICENSE)를 참고하세요.
