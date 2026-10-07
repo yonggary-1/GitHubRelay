@@ -182,22 +182,17 @@ func Analyze(ctx context.Context, gh *GitHub, r *RepoEntry, b *Bundle) *Plan {
 			}
 			dup = exists
 		}
-		for _, h := range r.History {
-			if h.Status != StFailed && h.Status != StDeleted {
-				tags = append(tags, h.Version)
-			}
-		}
+		// Compare only with releases that exist on GitHub.
 		if dup {
 			p.add(Fail, "chk.tag_exists", b.Tag)
-		}
-		if latest, ok := MaxVersion(tags); ok {
+		} else if latest, ok := MaxVersion(tags); ok {
 			p.Latest = latest.String()
 			if len(b.Version.Parts) > 0 && b.Version.Compare(latest) <= 0 {
 				p.add(Fail, "chk.version_not_newer", b.Version.String(), latest.String())
-			} else if !dup {
+			} else {
 				p.add(Pass, "chk.version_ok", b.Version.String(), latest.String())
 			}
-		} else if !dup && len(b.Version.Parts) > 0 {
+		} else if len(b.Version.Parts) > 0 {
 			p.add(Pass, "chk.version_first", b.Version.String())
 		}
 	}

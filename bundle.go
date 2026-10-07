@@ -582,3 +582,42 @@ func scanSecrets(b *Bundle, files map[string][]byte) {
 func IsWorkflowPath(p string) bool {
 	return strings.HasPrefix(p, ".github/workflows/")
 }
+
+// PeekRepo reads only release.json from a bundle and returns its repo field ("" if unknown).
+func PeekRepo(zipPath string) string {
+	zr, err := zip.OpenReader(zipPath)
+	if err != nil {
+		return ""
+	}
+	defer zr.Close()
+	var cand *zip.File
+	for _, f := range zr.File {
+		n, ok := cleanZipName(f.Name)
+		if !ok {
+			continue
+		}
+		if n == "release.json" {
+			cand = f
+			break
+		}
+		if cand == nil && strings.Count(n, "/") == 1 && strings.HasSuffix(n, "/release.json") {
+			cand = f
+		}
+	}
+	if cand == nil || cand.UncompressedSize64 > 1<<20 {
+		return ""
+	}
+	rc, err := cand.Open()
+	if err != nil {
+		return ""
+	}
+	defer rc.Close()
+	var m struct {
+		Repo string `json:"repo"`
+	}
+	data, err := io.ReadAll(io.LimitReader(rc, 1<<20))
+	if err != nil || json.Unmarshal(bytes.TrimPrefix(data, []byte("\xef\xbb\xbf")), &m) != nil {
+		return ""
+	}
+	return strings.TrimSpace(m.Repo)
+}

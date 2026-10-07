@@ -226,8 +226,8 @@ func TestFullFlow(t *testing.T) {
 	// Same version again is rejected.
 	p = Analyze(ctx, gh, r, LoadBundleBytes(makeZip(t, goodBundle("me/app", "0.1")), "me/app"))
 	fl, _ := levels(p.Checks)
-	if p.CanUpload() || !strings.Contains(strings.Join(fl, ","), "chk.tag_exists") {
-		t.Fatalf("dup version not rejected: %v", fl)
+	if p.CanUpload() || strings.Join(fl, ",") != "chk.tag_exists" {
+		t.Fatalf("dup version should give exactly one failure: %v", fl)
 	}
 	// Lower version is rejected.
 	g := goodBundle("me/app", "0.0.9")
@@ -314,6 +314,22 @@ func TestRetryRelease(t *testing.T) {
 	RetryRelease(ctx, gh, r, h, b, noProg)
 	if h.Status != StSuccess || len(f.releases) != 1 || f.releases[0].Target != h.CommitSHA {
 		t.Fatalf("retry: %s %s", h.Status, h.ErrorText("en"))
+	}
+}
+
+func TestPeekRepo(t *testing.T) {
+	dir := t.TempDir()
+	in := map[string]string{}
+	for k, v := range goodBundle("me/app", "0.1") {
+		in["wrap/"+k] = v
+	}
+	p := filepath.Join(dir, "b.zip")
+	os.WriteFile(p, makeZip(t, in), 0o644)
+	if r := PeekRepo(p); r != "me/app" {
+		t.Fatal(r)
+	}
+	if PeekRepo(filepath.Join(dir, "none.zip")) != "" {
+		t.Fatal("missing file")
 	}
 }
 

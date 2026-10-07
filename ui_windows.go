@@ -19,10 +19,10 @@ const wmRun = WM_APP + 1
 
 // Page indexes.
 const (
-	pgRepos = iota
-	pgRelease
+	pgRelease = iota
 	pgHistory
 	pgSpec
+	pgRepos
 	pgAll = -1
 )
 
@@ -61,15 +61,17 @@ type App struct {
 	guide, edResult                                                          uintptr
 
 	// release page
-	lblRelRepo, cbRelRepo, btnBrowse, btnReanalyze, drop, summary uintptr
-	lvChecks, lvChanges, ckDraft, ckApproveWF, ckApproveWarn      uintptr
-	status, progress, btnOpenRel, btnUpload                       uintptr
-	bundlePath                                                    string
-	plan                                                          *Plan
-	planUsed                                                      bool
-	lastRelURL                                                    string
-	statusKey                                                     string
-	statusArgs                                                    []any
+	lblRelRepo, lvRelRepos, btnBrowse, btnReanalyze, btnReset, dropFrame, dropMsg, summary uintptr
+	relIdx                                                                                 int  // selected repository on the release page
+	autoSel                                                                                bool // selection changed by the program, not the user
+	lvChecks, lvChanges, ckDraft, ckApproveWF, ckApproveWarn                               uintptr
+	status, progress, btnOpenRel, btnUpload                                                uintptr
+	bundlePath                                                                             string
+	plan                                                                                   *Plan
+	planUsed                                                                               bool
+	lastRelURL                                                                             string
+	statusKey                                                                              string
+	statusArgs                                                                             []any
 
 	// history page
 	lblHistRepo, cbHistRepo, btnSync, btnHistOpen, btnHistCommit, btnRetry, lvHist, histStatus uintptr
@@ -287,7 +289,7 @@ func (a *App) checkW(key string) int { return a.keyW(key) + a.s(28) }
 
 func runApp() {
 	runtime.LockOSThread()
-	app = &App{byID: map[uint32]func(uint32){}, selRepo: -1, page: pgRepos, nextID: 1000}
+	app = &App{byID: map[uint32]func(uint32){}, selRepo: -1, relIdx: -1, page: pgRelease, nextID: 1000}
 	a := app
 
 	exe, err := os.Executable()
@@ -364,7 +366,7 @@ func runApp() {
 	a.applyLanguage()
 	a.refreshAll()
 	a.renderPlan()
-	a.showPage(pgRepos)
+	a.showPage(pgRelease)
 	pShowWindow.Call(a.hwnd, SW_SHOW)
 	pUpdateWindow.Call(a.hwnd)
 	a.post(a.checkExpiry)
@@ -479,13 +481,10 @@ func (a *App) build() {
 	setText(a.radEN, "English")
 
 	a.tab = a.create("SysTabControl32", WS_TABSTOP|WS_CLIPSIBLINGS|WS_GROUP, 0, pgAll, "", nil)
-	for i, k := range []string{"tab.repos", "tab.release", "tab.history", "tab.spec"} {
+	for i, k := range tabKeys {
 		it := TCITEMW{Mask: TCIF_TEXT, PszText: u16(a.t(k))}
 		send(a.tab, TCM_INSERTITEMW, uintptr(i), uintptr(unsafe.Pointer(&it)))
 	}
-
-	// The tab control must be below every page control, or it paints over them.
-	pSetWindowPos.Call(a.tab, 1 /*HWND_BOTTOM*/, 0, 0, 0, 0, 0x1|0x2|SWP_NOACTIVATE)
 
 	// Repositories
 	a.lvRepos = a.listView(pgRepos, []string{"col.repo", "col.branch", "col.token", "col.latest", "col.expires"})
@@ -510,22 +509,17 @@ func (a *App) build() {
 
 	// Release
 	a.lblRelRepo = a.label(pgRelease, "lbl.repo")
-	a.cbRelRepo = a.combo(pgRelease, func() {
-		a.clearPlan()
-		if a.bundlePath != "" {
-			a.analyze()
-		} else {
-			a.renderPlan()
-		}
-	})
-	a.btnBrowse = a.button(pgRelease, "btn.browse", a.onBrowse)
+	a.lvRelRepos = a.listView(pgRelease, []string{"col.repo", "col.latest", "col.token"})
+	a.summary = a.wrapLabel(pgRelease, "")
+	a.dropFrame = a.create("STATIC", SS_LEFT|WS_CLIPSIBLINGS, WS_EX_CLIENTEDGE, pgRelease, "", nil)
+	a.dropMsg = a.create("STATIC", SS_CENTER|SS_NOPREFIX, 0, pgRelease, "", nil)
+	a.btnBrowse = a.button(pgRelease, "", a.onBrowse)
+	a.btnReset = a.button(pgRelease, "btn.reset", a.resetRelease)
 	a.btnReanalyze = a.button(pgRelease, "btn.reanalyze", func() {
 		if a.bundlePath != "" {
 			a.analyze()
 		}
 	})
-	a.drop = a.create("STATIC", SS_CENTER|SS_CENTERIMAGE|SS_NOPREFIX|SS_PATHELLIPSIS, WS_EX_CLIENTEDGE, pgRelease, "", nil)
-	a.summary = a.wrapLabel(pgRelease, "")
 	a.lvChecks = a.listView(pgRelease, []string{"col.result", "col.check"})
 	a.lvChanges = a.listView(pgRelease, []string{"col.change", "col.path"})
 	a.ckDraft = a.check(pgRelease, "chk.draft", a.updateUpload)
@@ -536,6 +530,10 @@ func (a *App) build() {
 	send(a.progress, PBM_SETRANGE32, 0, 1000)
 	a.btnOpenRel = a.button(pgRelease, "btn.openrelease", func() { openURL(a.lastRelURL) })
 	a.btnUpload = a.button(pgRelease, "btn.upload", a.onUpload)
+	// The drop message and its button sit on top of the drop frame.
+	for _, h := range []uintptr{a.dropMsg, a.btnBrowse} {
+		pSetWindowPos.Call(h, 0 /*HWND_TOP*/, 0, 0, 0, 0, 0x1|0x2|SWP_NOACTIVATE)
+	}
 
 	// History
 	a.lblHistRepo = a.label(pgHistory, "lbl.repo")
@@ -566,6 +564,9 @@ func (a *App) build() {
 	// Footer
 	a.disclaimer = a.create("STATIC", SS_LEFT|SS_NOPREFIX|SS_CENTERIMAGE|SS_ENDELLIPSIS, 0, pgAll, "app.disclaimer", nil)
 	a.btnAbout = a.button(pgAll, "btn.about", a.onAbout)
+
+	// The tab control must be below (created last, so moved here) every page control, or it paints over them.
+	pSetWindowPos.Call(a.tab, 1 /*HWND_BOTTOM*/, 0, 0, 0, 0, 0x1|0x2|SWP_NOACTIVATE)
 }
 
 func (a *App) showPage(p int) {
@@ -578,6 +579,7 @@ func (a *App) showPage(p int) {
 			show(c.h, c.page == p)
 		}
 	}
+	a.updateDropState()
 	a.layout()
 }
 
@@ -586,6 +588,11 @@ func (a *App) onNotify(h *NMHDR, lp uintptr) {
 	case h.HwndFrom == a.tab && h.Code == TCN_SELCHANGE:
 		p := int(send(a.tab, TCM_GETCURSEL, 0, 0))
 		a.showPage(p)
+	case h.HwndFrom == a.lvRelRepos && h.Code == LVN_ITEMCHANGED:
+		nm := (*NMLISTVIEW)(unsafe.Pointer(lp))
+		if nm.UNewState&LVIS_SELECTED != 0 {
+			a.onRelRepoSelected(int(nm.IItem))
+		}
 	case h.HwndFrom == a.lvRepos && h.Code == LVN_ITEMCHANGED:
 		nm := (*NMLISTVIEW)(unsafe.Pointer(lp))
 		if nm.UNewState&LVIS_SELECTED != 0 {
@@ -635,7 +642,7 @@ func (a *App) applyLanguage() {
 			send(c.h, EM_SETCUEBANNER, 1, uintptr(unsafe.Pointer(u16(a.t(c.cueKey)))))
 		}
 	}
-	for i, k := range []string{"tab.repos", "tab.release", "tab.history", "tab.spec"} {
+	for i, k := range tabKeys {
 		it := TCITEMW{Mask: TCIF_TEXT, PszText: u16(a.t(k))}
 		send(a.tab, TCM_SETITEMW, uintptr(i), uintptr(unsafe.Pointer(&it)))
 	}
@@ -776,21 +783,13 @@ func (a *App) layout() {
 
 	case pgRelease:
 		lblW := a.keyW("lbl.repo") + a.s(12)
-		brW, reW := a.btnW("btn.browse"), a.btnW("btn.reanalyze")
-		cbW := pw - lblW - brW - reW - 2*gap
-		if cbW > a.s(420) {
-			cbW = a.s(420)
-		}
 		y := y0
+		repoH := a.s(100)
 		move(a.lblRelRepo, x0, y, lblW, rowH)
-		move(a.cbRelRepo, x0+lblW, y, cbW, a.s(300))
-		move(a.btnBrowse, x0+lblW+cbW+gap, y, brW, rowH)
-		move(a.btnReanalyze, x0+lblW+cbW+gap+brW+gap, y, reW, rowH)
-		y += rowH + gap
-		dropH := a.s(46)
-		move(a.drop, x0, y, pw, dropH)
-		y += dropH + gap
-		sumH := a.s(40)
+		move(a.lvRelRepos, x0+lblW, y, pw-lblW, repoH)
+		a.setCols(a.lvRelRepos, pw-lblW, []float64{0.50, 0.16, 0.34})
+		y += repoH + gap
+		sumH := a.s(36)
 		move(a.summary, x0, y, pw, sumH)
 		y += sumH
 
@@ -815,12 +814,29 @@ func (a *App) layout() {
 			}
 			move(c.h, x0, cy+i*(ckH+a.s(2)), w, ckH)
 		}
-		listH := cy - gap - y
 		lw := pw * 55 / 100
-		move(a.lvChecks, x0, y, lw, listH)
+		ay := cy - gap - rowH
+		move(a.btnReset, x0, ay, a.btnW("btn.reset"), rowH)
+		move(a.btnReanalyze, x0+lw+gap, ay, a.btnW("btn.reanalyze"), rowH)
+		panelH := ay - gap - y
+		move(a.lvChecks, x0, y, lw, panelH)
 		a.setCols(a.lvChecks, lw, []float64{0.16, 0.84})
-		move(a.lvChanges, x0+lw+gap, y, pw-lw-gap, listH)
+		move(a.lvChanges, x0+lw+gap, y, pw-lw-gap, panelH)
 		a.setCols(a.lvChanges, pw-lw-gap, []float64{0.22, 0.78})
+		// drop area: message and button centred in the left panel
+		move(a.dropFrame, x0, y, lw, panelH)
+		msgW := lw - a.s(40)
+		msgH := a.maxWrapH("drop.hint", msgW)
+		if h := a.maxWrapH("drop.need_repo", msgW); h > msgH {
+			msgH = h
+		}
+		bw := a.btnW("btn.browse")
+		if w := a.btnW("btn.goto_repos"); w > bw {
+			bw = w
+		}
+		my := y + (panelH-msgH-a.s(10)-rowH)/2
+		move(a.dropMsg, x0+a.s(20), my, msgW, msgH)
+		move(a.btnBrowse, x0+(lw-bw)/2, my+msgH+a.s(10), bw, rowH)
 
 	case pgHistory:
 		lblW := a.keyW("lbl.repo") + a.s(12)
@@ -864,13 +880,14 @@ func (a *App) ask(s string) bool {
 
 func (a *App) setBusy(b bool) {
 	a.busy = b
-	for _, h := range []uintptr{a.btnRegister, a.btnReplace, a.btnVerify, a.btnRemove, a.btnBrowse, a.btnReanalyze, a.btnSync, a.btnRetry, a.cbRelRepo, a.radKO, a.radEN} {
+	for _, h := range []uintptr{a.btnRegister, a.btnReplace, a.btnVerify, a.btnRemove, a.btnBrowse, a.btnReanalyze, a.btnReset, a.btnSync, a.btnRetry, a.lvRelRepos, a.radKO, a.radEN} {
 		enable(h, !b)
 	}
 	if !b {
 		a.updateRepoButtons()
 		a.updateHistButtons()
 	}
+	a.updateDropState()
 	a.updateUpload()
 }
 
@@ -982,16 +999,10 @@ func (a *App) refreshCombos() {
 			send(cb, CB_SETCURSEL, uintptr(cur), 0)
 		}
 	}
-	fill(a.cbRelRepo, false)
+	a.refreshRelRepos()
 	fill(a.cbHistRepo, false)
 	fill(a.cbSpecRepo, true)
-	if len(a.store.D.Repos) == 0 {
-		setText(a.drop, a.t("drop.need_repo"))
-	} else if a.bundlePath == "" {
-		setText(a.drop, a.t("drop.hint"))
-	} else {
-		setText(a.drop, a.t("drop.file", a.bundlePath))
-	}
+	a.updateDropState()
 }
 
 func (a *App) histStatusText(s string) string {
@@ -1213,9 +1224,8 @@ func (a *App) onRemove() {
 	setText(a.edURL, "")
 	setText(a.edBr, "")
 	setText(a.edTok, "")
-	a.clearPlan()
 	a.refreshAll()
-	a.renderPlan()
+	a.resetRelease()
 }
 
 // ---------- release actions ----------
@@ -1255,24 +1265,130 @@ func (a *App) onDrop(hdrop uintptr) {
 		return
 	}
 	a.showPage(pgRelease)
-	a.bundlePath = p
-	a.clearPlan()
-	a.analyze()
+	a.loadBundle(p)
 }
 
 func (a *App) onBrowse() {
+	if len(a.store.D.Repos) == 0 {
+		a.showPage(pgRepos)
+		return
+	}
 	p, ok := fileDialog(a.hwnd, false, a.t("filter.zip"), "*.zip", "", "zip")
 	if !ok {
 		return
 	}
+	a.loadBundle(p)
+}
+
+// loadBundle selects the repository the bundle names (if registered) and starts the check.
+func (a *App) loadBundle(p string) {
+	if len(a.store.D.Repos) == 0 {
+		a.warn(a.t("drop.need_repo"))
+		return
+	}
+	if repo := PeekRepo(p); repo != "" {
+		for i, r := range a.store.D.Repos {
+			if SameRepo(r.Full(), repo) && i != a.relIdx {
+				a.autoSel = true
+				lvSelect(a.lvRelRepos, i)
+				a.autoSel = false
+				break
+			}
+		}
+	}
 	a.bundlePath = p
 	a.clearPlan()
+	a.updateDropState()
 	a.analyze()
 }
 
+// resetRelease forgets the bundle and returns to the drop area.
+func (a *App) resetRelease() {
+	if a.busy {
+		return
+	}
+	a.bundlePath = ""
+	a.clearPlan()
+	a.setStatus("")
+	send(a.progress, PBM_SETPOS, 0, 0)
+	a.renderPlan()
+	a.updateDropState()
+}
+
+func (a *App) relRepo() *RepoEntry {
+	if a.relIdx >= 0 && a.relIdx < len(a.store.D.Repos) {
+		return a.store.D.Repos[a.relIdx]
+	}
+	return nil
+}
+
+func (a *App) onRelRepoSelected(i int) {
+	if i == a.relIdx {
+		return
+	}
+	a.relIdx = i
+	if r := a.relRepo(); r != nil && a.store.D.LastRepo != r.Full() {
+		a.store.D.LastRepo = r.Full()
+		a.save()
+	}
+	if !a.autoSel {
+		a.resetRelease()
+	}
+}
+
+func (a *App) refreshRelRepos() {
+	lvClear(a.lvRelRepos)
+	want := -1
+	for i, r := range a.store.D.Repos {
+		tok, _ := a.statusText(r)
+		latest := a.t("none")
+		if h := r.LatestSuccess(); h != nil {
+			latest = h.Version
+		}
+		lvAdd(a.lvRelRepos, r.Full(), latest, tok)
+		if SameRepo(r.Full(), a.store.D.LastRepo) {
+			want = i
+		}
+	}
+	if want < 0 && len(a.store.D.Repos) > 0 {
+		want = 0
+	}
+	a.relIdx = want
+	if want >= 0 {
+		a.autoSel = true
+		lvSelect(a.lvRelRepos, want)
+		a.autoSel = false
+	}
+}
+
+// updateDropState shows the drop area when no bundle is loaded, and the check list otherwise.
+func (a *App) updateDropState() {
+	loaded := a.bundlePath != ""
+	on := a.page == pgRelease
+	noRepo := len(a.store.D.Repos) == 0
+	for _, h := range []uintptr{a.dropFrame, a.dropMsg, a.btnBrowse} {
+		show(h, on && !loaded)
+	}
+	show(a.lvChecks, on && loaded)
+	if noRepo {
+		setText(a.dropMsg, a.t("drop.need_repo"))
+		setText(a.btnBrowse, a.t("btn.goto_repos"))
+	} else {
+		setText(a.dropMsg, a.t("drop.hint"))
+		setText(a.btnBrowse, a.t("btn.browse"))
+	}
+	enable(a.btnBrowse, !a.busy)
+	enable(a.btnReset, loaded && !a.busy)
+	enable(a.btnReanalyze, loaded && !a.busy && !noRepo)
+}
+
+func (a *App) bundleLabel() string {
+	return a.t("drop.file", filepath.Base(a.bundlePath)) + "   ·   "
+}
+
 func (a *App) analyze() {
-	r := comboRepo(a, a.cbRelRepo, 0)
-	a.refreshCombos()
+	r := a.relRepo()
+	a.updateDropState()
 	if r == nil || a.bundlePath == "" {
 		a.renderPlan()
 		return
@@ -1320,7 +1436,11 @@ func (a *App) renderPlan() {
 	lvClear(a.lvChanges)
 	p := a.plan
 	if p == nil {
-		setText(a.summary, a.t("summary.none"))
+		if a.bundlePath != "" {
+			setText(a.summary, a.bundleLabel())
+		} else {
+			setText(a.summary, a.t("summary.none"))
+		}
 		if a.bundlePath == "" {
 			a.setStatus("")
 		}
@@ -1344,9 +1464,9 @@ func (a *App) renderPlan() {
 		tag = a.t("none")
 	}
 	if p.Branch != "" {
-		setText(a.summary, a.t("summary", ver, tag, p.Branch, p.Added, p.Modified, p.Deleted, p.Unchanged))
+		setText(a.summary, a.bundleLabel()+a.t("summary", ver, tag, p.Branch, p.Added, p.Modified, p.Deleted, p.Unchanged))
 	} else {
-		setText(a.summary, a.t("summary.local", ver, tag, len(b.Files), len(b.Assets)))
+		setText(a.summary, a.bundleLabel()+a.t("summary.local", ver, tag, len(b.Files), len(b.Assets)))
 	}
 	if !a.planUsed {
 		switch {
@@ -1363,8 +1483,9 @@ func (a *App) updateUpload() {
 	p := a.plan
 	needWF := p != nil && p.NeedsWorkflowApproval()
 	needWarn := p != nil && p.NeedsWarnApproval()
-	enable(a.ckApproveWF, needWF && !a.busy && !a.planUsed)
-	enable(a.ckApproveWarn, needWarn && !a.busy && !a.planUsed)
+	canUp := p != nil && p.CanUpload()
+	enable(a.ckApproveWF, needWF && canUp && !a.busy && !a.planUsed)
+	enable(a.ckApproveWarn, needWarn && canUp && !a.busy && !a.planUsed)
 	enable(a.ckDraft, !a.busy && !a.planUsed)
 	ok := p != nil && !a.busy && !a.planUsed && p.CanUpload() &&
 		(!needWF || checked(a.ckApproveWF)) && (!needWarn || checked(a.ckApproveWarn))
@@ -1379,7 +1500,7 @@ func (a *App) updateUpload() {
 
 func (a *App) onUpload() {
 	p := a.plan
-	r := comboRepo(a, a.cbRelRepo, 0)
+	r := a.relRepo()
 	if p == nil || r == nil || !p.CanUpload() || a.busy || a.planUsed || !SameRepo(r.Full(), p.Owner+"/"+p.Name) {
 		return
 	}
@@ -1645,3 +1766,5 @@ func (a *App) checkExpiry() {
 		a.warn(a.t("msg.expiry_notice", strings.Join(lines, "\n")))
 	}
 }
+
+var tabKeys = []string{"tab.release", "tab.history", "tab.spec", "tab.repos"}

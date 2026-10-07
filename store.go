@@ -78,6 +78,8 @@ type Data struct {
 	App      string       `json:"app"`
 	Language string       `json:"language"`
 	Repos    []*RepoEntry `json:"repos"`
+	// LastRepo is the repository last selected on the release page.
+	LastRepo string `json:"last_repo,omitempty"`
 	// Archived keeps history of removed repositories, keyed by lower-case owner/name.
 	Archived map[string][]*HistoryEntry `json:"archived,omitempty"`
 }
