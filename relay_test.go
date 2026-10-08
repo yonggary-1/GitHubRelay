@@ -4,7 +4,11 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -841,5 +845,93 @@ func TestTextArgs(t *testing.T) {
 	ko := T(LangKO, "del.confirm_latest", "me/app", "0.7", "v0.7", "0.6.1", 1, 2, 3)
 	if strings.Count(ko, "0.6.1") != 3 || !strings.Contains(ko, "추가 1 · 수정 2 · 삭제 3") {
 		t.Fatal(ko)
+	}
+}
+
+func TestUpdateDownloadAndSwap(t *testing.T) {
+	ctx := context.Background()
+	good := append([]byte("MZ"), bytes.Repeat([]byte{0x90}, 4096)...)
+	sum := sha256.Sum256(good)
+	digest := "sha256:" + hex.EncodeToString(sum[:])
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/good":
+			w.Write(good)
+		case "/redirect":
+			http.Redirect(w, r, "/good", http.StatusFound)
+		case "/text":
+			w.Write(bytes.Repeat([]byte("x"), 4098))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	dst := filepath.Join(dir, "new.exe")
+	cl := srv.Client()
+
+	if err := DownloadUpdate(ctx, cl, &UpdateInfo{AssetURL: srv.URL + "/redirect", Size: int64(len(good)), Digest: digest}, dst); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		u    UpdateInfo
+		want error
+	}{
+		{UpdateInfo{AssetURL: srv.URL + "/good", Size: int64(len(good)), Digest: "sha256:" + strings.Repeat("0", 64)}, errUpdDigest},
+		{UpdateInfo{AssetURL: srv.URL + "/good", Size: 10}, errUpdSize},
+		{UpdateInfo{AssetURL: srv.URL + "/text", Size: 4098}, errUpdFormat},
+	}
+	for _, c := range cases {
+		bad := filepath.Join(dir, "bad.exe")
+		if err := DownloadUpdate(ctx, cl, &c.u, bad); err != c.want {
+			t.Fatalf("want %v, got %v", c.want, err)
+		}
+		if _, err := os.Stat(bad); err == nil {
+			t.Fatal("rejected download left on disk")
+		}
+	}
+	if err := DownloadUpdate(ctx, cl, &UpdateInfo{AssetURL: srv.URL + "/missing"}, filepath.Join(dir, "m.exe")); !IsStatus(err, 404) {
+		t.Fatalf("missing asset: %v", err)
+	}
+
+	// Swap: old program becomes .old, new one takes its name; data file untouched.
+	exe := filepath.Join(dir, "GithubRelay.exe")
+	os.WriteFile(exe, []byte("MZold"), 0o755)
+	os.WriteFile(filepath.Join(dir, "GithubRelay.dat"), []byte("{}"), 0o644)
+	if err := SwapProgram(exe, dst); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(exe); !bytes.Equal(b, good) {
+		t.Fatal("new program not in place")
+	}
+	if b, _ := os.ReadFile(exe + ".old"); string(b) != "MZold" {
+		t.Fatal("old program not kept")
+	}
+	// A failed swap restores the old program.
+	os.Remove(exe + ".old")
+	if err := SwapProgram(exe, filepath.Join(dir, "does-not-exist.exe")); err == nil {
+		t.Fatal("swap with missing file succeeded")
+	}
+	if b, _ := os.ReadFile(exe); !bytes.Equal(b, good) {
+		t.Fatal("program lost after failed swap")
+	}
+}
+
+func TestUpdateAssetPick(t *testing.T) {
+	ctx := context.Background()
+	f := newFake("me", "app")
+	defer f.srv.Close()
+	f.releases = append(f.releases, fakeRelease{Release: Release{ID: 1, TagName: "v2.0", HTMLURL: "page"}, Assets: map[string][]byte{}})
+	f.releases[0].Release.Assets = append(f.releases[0].Release.Assets, struct {
+		Name        string `json:"name"`
+		DownloadURL string `json:"browser_download_url"`
+		Size        int64  `json:"size"`
+		Digest      string `json:"digest"`
+	}{Name: "githubrelay.exe", DownloadURL: "dl", Size: 5, Digest: "sha256:ab"})
+	pub := f.client()
+	pub.Token = ""
+	u, err := checkUpdateFor(ctx, pub, "me", "app", "0.9")
+	if err != nil || u == nil || u.AssetURL != "dl" || u.Size != 5 || u.Digest != "sha256:ab" || u.URL != "page" {
+		t.Fatalf("%v %+v", err, u)
 	}
 }

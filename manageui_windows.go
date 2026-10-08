@@ -5,6 +5,10 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -241,7 +245,11 @@ func (a *App) checkUpdateAsync(manual bool) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
-		u, err := CheckUpdate(ctx, NewGitHub(""))
+		gh := NewGitHub("")
+		if updateAPIBase != "" {
+			gh.APIBase = updateAPIBase
+		}
+		u, err := CheckUpdate(ctx, gh)
 		a.post(func() {
 			if manual {
 				enable(a.btnUpdate, true)
@@ -261,15 +269,102 @@ func (a *App) checkUpdateAsync(manual bool) {
 				if !manual && a.store.D.SkipUpdate == v {
 					return
 				}
-				switch msgBox(a.hwnd, a.t("upd.found", v, AppVersion), "GitHub Relay", MB_YESNOCANCEL|MB_ICONINFORMATION) {
+				key := "upd.found"
+				if u.AssetURL == "" {
+					key = "upd.found_page"
+				}
+				switch msgBox(a.hwnd, a.t(key, v, AppVersion), "GitHub Relay", MB_YESNOCANCEL|MB_ICONINFORMATION) {
 				case IDYES:
-					openURL(u.URL)
+					if u.AssetURL == "" {
+						openURL(u.URL)
+					} else {
+						a.applyUpdate(u)
+					}
 				case IDNO:
 				default:
 					a.store.D.SkipUpdate = v
 					a.save()
 				}
 			}
+		})
+	}()
+}
+
+// updateAPIBase is empty in release builds. Test builds may set it with
+// -ldflags "-X main.updateAPIBase=http://127.0.0.1:port" to try the update locally.
+var updateAPIBase string
+
+// updatedFlag is passed to the new program after an update.
+const updatedFlag = "--updated"
+
+// instanceMutex keeps one window per data file; it is released before an update restarts the program.
+var instanceMutex uintptr
+
+// applyUpdate downloads, verifies and installs the new version, then restarts.
+func (a *App) applyUpdate(u *UpdateInfo) {
+	if a.busy || a.uploading || a.batchRunning {
+		a.warn(a.t("upd.busy"))
+		return
+	}
+	exe, err := os.Executable()
+	if err == nil {
+		exe, err = filepath.EvalSymlinks(exe)
+	}
+	if err != nil {
+		a.warn(a.t("upd.failed", err.Error()))
+		return
+	}
+	tmp := exe + ".new"
+	a.setBusy(true)
+	enable(a.btnUpdate, false)
+	a.setStatus("upd.downloading", u.Version.String())
+	a.setMarquee(true)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		err := DownloadUpdate(ctx, &http.Client{Timeout: 5 * time.Minute}, u, tmp)
+		a.post(func() {
+			a.setMarquee(false)
+			fail := func(e error) {
+				os.Remove(tmp)
+				a.setBusy(false)
+				enable(a.btnUpdate, true)
+				a.setStatus("")
+				msg := e.Error()
+				if e == errUpdSize || e == errUpdDigest || e == errUpdFormat {
+					msg = a.t(e.Error())
+				} else if k, args := explainAPIError(e); k != "err.network" {
+					msg = a.t(k, args...)
+				}
+				if a.ask(a.t("upd.failed_page", msg)) {
+					openURL(u.URL)
+				}
+			}
+			if err != nil {
+				fail(err)
+				return
+			}
+			if !a.save() {
+				os.Remove(tmp)
+				a.setBusy(false)
+				enable(a.btnUpdate, true)
+				return
+			}
+			if err := SwapProgram(exe, tmp); err != nil {
+				fail(err)
+				return
+			}
+			// Hand over: release the single-instance lock, start the new version, close this one.
+			if instanceMutex != 0 {
+				pCloseHandle.Call(instanceMutex)
+				instanceMutex = 0
+			}
+			cmd := exec.Command(exe, updatedFlag)
+			cmd.Dir = filepath.Dir(exe)
+			if err := cmd.Start(); err != nil {
+				a.warn(a.t("upd.restart_failed", err.Error()))
+			}
+			pDestroyWindow.Call(a.hwnd)
 		})
 	}()
 }

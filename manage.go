@@ -2,7 +2,13 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"os"
 	"sort"
 	"strings"
 )
@@ -238,9 +244,15 @@ func ExecuteRevert(ctx context.Context, gh *GitHub, r *RepoEntry, rp *RevertPlan
 
 // UpdateInfo is a newer GitHub Relay release, if any.
 type UpdateInfo struct {
-	Version Version
-	URL     string
+	Version  Version
+	URL      string // release page
+	AssetURL string // download of the program, "" when the release has none
+	Size     int64
+	Digest   string
 }
+
+// UpdateAssetName is the program file attached to every GitHub Relay release.
+const UpdateAssetName = "GithubRelay.exe"
 
 // CheckUpdate looks at the project's latest public release. It needs no token.
 func CheckUpdate(ctx context.Context, gh *GitHub) (*UpdateInfo, error) {
@@ -267,7 +279,90 @@ func checkUpdateFor(ctx context.Context, gh *GitHub, owner, name, current string
 	if v.Compare(cur) <= 0 {
 		return nil, nil
 	}
-	return &UpdateInfo{Version: v, URL: rel.HTMLURL}, nil
+	u := &UpdateInfo{Version: v, URL: rel.HTMLURL}
+	for _, a := range rel.Assets {
+		if strings.EqualFold(a.Name, UpdateAssetName) {
+			u.AssetURL, u.Size, u.Digest = a.DownloadURL, a.Size, a.Digest
+		}
+	}
+	return u, nil
+}
+
+// Update errors, shown to the user through these text keys.
+var (
+	errUpdSize   = errors.New("upd.err_size")
+	errUpdDigest = errors.New("upd.err_digest")
+	errUpdFormat = errors.New("upd.err_format")
+)
+
+// DownloadUpdate saves the new program to dst and checks size, SHA-256 and the Windows program header.
+// On any problem dst is removed.
+func DownloadUpdate(ctx context.Context, client *http.Client, u *UpdateInfo, dst string) (err error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", u.AssetURL, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("User-Agent", "GitHub-Relay/"+AppVersion)
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return &APIError{Status: resp.StatusCode, Path: req.URL.Path}
+	}
+	f, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		f.Close()
+		if err != nil {
+			os.Remove(dst)
+		}
+	}()
+	h := sha256.New()
+	limit := u.Size
+	if limit <= 0 {
+		limit = 200 << 20
+	}
+	n, err := io.Copy(io.MultiWriter(f, h), io.LimitReader(resp.Body, limit+1))
+	if err != nil {
+		return err
+	}
+	if (u.Size > 0 && n != u.Size) || n > limit || n < 1024 {
+		return errUpdSize
+	}
+	if d := strings.TrimPrefix(strings.ToLower(u.Digest), "sha256:"); d != "" && d != hex.EncodeToString(h.Sum(nil)) {
+		return errUpdDigest
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	head := make([]byte, 2)
+	if g, err := os.Open(dst); err == nil {
+		io.ReadFull(g, head)
+		g.Close()
+	}
+	if string(head) != "MZ" {
+		return errUpdFormat
+	}
+	return nil
+}
+
+// SwapProgram puts newFile in place of exe. The running exe is renamed to exe+".old"
+// (Windows allows renaming a running program, not overwriting it). On failure the old exe is restored.
+func SwapProgram(exe, newFile string) error {
+	old := exe + ".old"
+	os.Remove(old)
+	if err := os.Rename(exe, old); err != nil {
+		return err
+	}
+	if err := os.Rename(newFile, exe); err != nil {
+		os.Rename(old, exe)
+		return err
+	}
+	return nil
 }
 
 // ---------- releases around a version ----------

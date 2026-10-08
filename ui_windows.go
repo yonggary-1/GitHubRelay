@@ -315,10 +315,34 @@ func runApp() {
 
 	// One instance per data file, so two windows never overwrite each other.
 	mname := "Local\\GitHubRelay-" + fmt.Sprintf("%08x", hashStr(strings.ToLower(dataPath)))
-	if _, _, e := pCreateMutexW.Call(0, 0, uintptr(unsafe.Pointer(u16(mname)))); e == syscall.Errno(183) {
-		msgBox(0, T(lang, "msg.already_running"), "GitHub Relay", MB_ICONINFORMATION)
-		return
+	// Right after an update the previous instance may still be closing: wait for it a little.
+	tries := 1
+	if len(os.Args) > 1 && os.Args[1] == updatedFlag {
+		tries = 40
 	}
+	for i := 0; ; i++ {
+		h, _, e := pCreateMutexW.Call(0, 0, uintptr(unsafe.Pointer(u16(mname))))
+		if e != syscall.Errno(183) {
+			instanceMutex = h
+			break
+		}
+		pCloseHandle.Call(h)
+		if i+1 >= tries {
+			msgBox(0, T(lang, "msg.already_running"), "GitHub Relay", MB_ICONINFORMATION)
+			return
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	// Remove the program left by an earlier update. Right after an update the old
+	// process may still be closing, so keep trying for a while in the background.
+	go func(old string) {
+		for i := 0; i < 60; i++ {
+			if err := os.Remove(old); err == nil || os.IsNotExist(err) {
+				return
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+	}(exe + ".old")
 
 	st, err := LoadStore(dataPath, dpapi{})
 	if err != nil {

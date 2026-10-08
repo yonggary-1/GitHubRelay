@@ -70,7 +70,9 @@ A repository has two faces that move separately: the code (Code tab) and the rel
 
 ## Update check
 
-At startup GitHub Relay checks the latest release of its own repository (no token needed) and tells you when a newer version exists. You can open the release page, be reminded next time, or skip that version. **Check for updates** at the bottom of the window checks on demand. GitHub Relay never downloads or replaces itself.
+At startup GitHub Relay checks the latest release of its own repository (no token needed) and tells you when a newer version exists. **Check for updates** at the bottom of the window checks on demand.
+
+Choosing **Update now** downloads the new `GithubRelay.exe` next to the current one, checks its size, its SHA-256 against the value GitHub publishes for the file, and that it is a Windows program, then replaces the program and restarts it automatically. `GithubRelay.dat` is not touched, so repositories, tokens and history stay. If anything fails, the current version stays as it is. Updating is not possible while an upload or batch is running. You can also skip a version or be reminded later.
 
 ## Renaming a repository
 

@@ -302,6 +302,12 @@ type Release struct {
 	UploadURL string `json:"upload_url"`
 	CreatedAt string `json:"created_at"`
 	Published string `json:"published_at"`
+	Assets    []struct {
+		Name        string `json:"name"`
+		DownloadURL string `json:"browser_download_url"`
+		Size        int64  `json:"size"`
+		Digest      string `json:"digest"` // "sha256:<hex>", when GitHub provides it
+	} `json:"assets"`
 }
 
 func (g *GitHub) CreateRelease(ctx context.Context, owner, name, tag, target, title, body string, draft bool) (*Release, error) {

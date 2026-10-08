@@ -72,6 +72,7 @@ var (
 	pCreateMutexW             = kernel32.NewProc("CreateMutexW")
 	pGetUserDefaultUILanguage = kernel32.NewProc("GetUserDefaultUILanguage")
 	pLocalFree                = kernel32.NewProc("LocalFree")
+	pCloseHandle              = kernel32.NewProc("CloseHandle")
 
 	pInitCommonControlsEx = comctl32.NewProc("InitCommonControlsEx")
 
