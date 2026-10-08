@@ -62,7 +62,12 @@ type App struct {
 
 	// release page
 	lblRelRepo, lvRelRepos, btnBrowse, btnReanalyze, btnReset, dropFrame, dropMsg, summary uintptr
-	relIdx                                                                                 int  // selected repository on the release page
+	relIdx                                                                                 int // selected repository on the release page
+	lvBatch                                                                                uintptr
+	batch                                                                                  *Batch
+	batchPaths                                                                             []string
+	batchRunning                                                                           bool
+	batchStop                                                                              bool
 	autoSel                                                                                bool // selection changed by the program, not the user
 	lvChecks, lvChanges, ckDraft, ckApproveWF, ckApproveWarn                               uintptr
 	status, progress, btnOpenRel, btnUpload                                                uintptr
@@ -517,12 +522,17 @@ func (a *App) build() {
 	a.btnBrowse = a.button(pgRelease, "", a.onBrowse)
 	a.btnReset = a.button(pgRelease, "btn.reset", a.resetRelease)
 	a.btnReanalyze = a.button(pgRelease, "btn.reanalyze", func() {
+		if a.batch != nil && !a.batchRunning {
+			a.loadBatch(a.batchPaths)
+			return
+		}
 		if a.bundlePath != "" {
 			a.analyze()
 		}
 	})
 	a.lvChecks = a.listView(pgRelease, []string{"col.result", "col.check"})
 	a.lvChanges = a.listView(pgRelease, []string{"col.change", "col.path"})
+	a.lvBatch = a.listView(pgRelease, []string{"col.no", "col.file", "col.version", "col.status", "col.note"})
 	a.ckDraft = a.check(pgRelease, "chk.draft", a.updateUpload)
 	a.ckApproveWF = a.check(pgRelease, "chk.approve_wf", a.updateUpload)
 	a.ckApproveWarn = a.check(pgRelease, "chk.approve_warn", a.updateUpload)
@@ -607,6 +617,8 @@ func (a *App) onNotify(h *NMHDR, lp uintptr) {
 		a.updateRepoButtons()
 	case h.HwndFrom == a.lvHist && h.Code == LVN_ITEMCHANGED:
 		a.updateHistButtons()
+	case h.HwndFrom == a.lvBatch && h.Code == NM_DBLCLK:
+		a.showBatchItem(lvSelected(a.lvBatch))
 	case h.HwndFrom == a.lvHist && h.Code == NM_DBLCLK:
 		if e := a.selectedHist(); e != nil {
 			if e.ReleaseURL != "" {
@@ -822,6 +834,8 @@ func (a *App) layout() {
 		panelH := ay - gap - y
 		move(a.lvChecks, x0, y, lw, panelH)
 		a.setCols(a.lvChecks, lw, []float64{0.16, 0.84})
+		move(a.lvBatch, x0, y, lw, panelH)
+		a.setCols(a.lvBatch, lw, []float64{0.07, 0.36, 0.12, 0.13, 0.32})
 		move(a.lvChanges, x0+lw+gap, y, pw-lw-gap, panelH)
 		a.setCols(a.lvChanges, pw-lw-gap, []float64{0.22, 0.78})
 		// drop area: message and button centred in the left panel
@@ -1251,24 +1265,26 @@ func (a *App) setStatus(key string, args ...any) {
 
 func (a *App) onDrop(hdrop uintptr) {
 	defer pDragFinish.Call(hdrop)
-	n, _, _ := pDragQueryFileW.Call(hdrop, 0xFFFFFFFF, 0, 0)
-	if n != 1 {
-		a.warn(a.t("msg.only_zip"))
+	paths := dropPaths(hdrop)
+	if len(paths) == 0 {
 		return
 	}
-	buf := make([]uint16, 32768)
-	pDragQueryFileW.Call(hdrop, 0, uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)))
-	p := syscall.UTF16ToString(buf)
-	if !strings.EqualFold(filepath.Ext(p), ".zip") {
-		a.warn(a.t("msg.only_zip"))
-		return
+	for _, p := range paths {
+		if !strings.EqualFold(filepath.Ext(p), ".zip") {
+			a.warn(a.t("msg.only_zip"))
+			return
+		}
 	}
 	if a.busy {
 		a.warn(a.t("msg.busy"))
 		return
 	}
 	a.showPage(pgRelease)
-	a.loadBundle(p)
+	if len(paths) > 1 {
+		a.loadBatch(paths)
+		return
+	}
+	a.loadBundle(paths[0])
 }
 
 func (a *App) onBrowse() {
@@ -1276,11 +1292,13 @@ func (a *App) onBrowse() {
 		a.showPage(pgRepos)
 		return
 	}
-	p, ok := fileDialog(a.hwnd, false, a.t("filter.zip"), "*.zip", "", "zip")
-	if !ok {
-		return
+	ps := openFilesDialog(a.hwnd, a.t("filter.zip"), "*.zip")
+	switch {
+	case len(ps) > 1:
+		a.loadBatch(ps)
+	case len(ps) == 1:
+		a.loadBundle(ps[0])
 	}
-	a.loadBundle(p)
 }
 
 // loadBundle selects the repository the bundle names (if registered) and starts the check.
@@ -1299,6 +1317,7 @@ func (a *App) loadBundle(p string) {
 			}
 		}
 	}
+	a.batch = nil
 	a.bundlePath = p
 	a.clearPlan()
 	a.updateDropState()
@@ -1307,10 +1326,14 @@ func (a *App) loadBundle(p string) {
 
 // resetRelease forgets the bundle and returns to the drop area.
 func (a *App) resetRelease() {
-	if a.busy {
+	if a.busy || a.batchRunning {
 		return
 	}
 	a.bundlePath = ""
+	a.batch = nil
+	a.batchPaths = nil
+	lvClear(a.lvBatch)
+	setText(a.btnUpload, a.t("btn.upload"))
 	a.clearPlan()
 	a.setStatus("")
 	send(a.progress, PBM_SETPOS, 0, 0)
@@ -1366,13 +1389,14 @@ func (a *App) refreshRelRepos() {
 
 // updateDropState shows the drop area when no bundle is loaded, and the check list otherwise.
 func (a *App) updateDropState() {
-	loaded := a.bundlePath != ""
+	loaded := a.bundlePath != "" || a.batch != nil
 	on := a.page == pgRelease
 	noRepo := len(a.store.D.Repos) == 0
 	for _, h := range []uintptr{a.dropFrame, a.dropMsg, a.btnBrowse} {
 		show(h, on && !loaded)
 	}
-	show(a.lvChecks, on && loaded)
+	show(a.lvChecks, on && a.bundlePath != "")
+	show(a.lvBatch, on && a.batch != nil)
 	if noRepo {
 		setText(a.dropMsg, a.t("drop.need_repo"))
 		setText(a.btnBrowse, a.t("btn.goto_repos"))
@@ -1444,6 +1468,10 @@ func (a *App) analyze() {
 }
 
 func (a *App) renderPlan() {
+	if a.batch != nil {
+		a.renderBatch()
+		return
+	}
 	lvClear(a.lvChecks)
 	lvClear(a.lvChanges)
 	p := a.plan
@@ -1492,6 +1520,11 @@ func (a *App) renderPlan() {
 }
 
 func (a *App) updateUpload() {
+	if a.batch != nil {
+		a.updateBatchButtons()
+		return
+	}
+	setText(a.btnUpload, a.t("btn.upload"))
 	p := a.plan
 	needWF := p != nil && p.NeedsWorkflowApproval()
 	needWarn := p != nil && p.NeedsWarnApproval()
@@ -1511,6 +1544,10 @@ func (a *App) updateUpload() {
 }
 
 func (a *App) onUpload() {
+	if a.batch != nil {
+		a.onBatchButton()
+		return
+	}
 	p := a.plan
 	r := a.relRepo()
 	if p == nil || r == nil || !p.CanUpload() || a.busy || a.planUsed || !SameRepo(r.Full(), p.Owner+"/"+p.Name) {

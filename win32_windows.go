@@ -504,3 +504,42 @@ func redrawAll(h uintptr) {
 	const rdwInvalidate, rdwErase, rdwAllChildren, rdwFrame = 0x1, 0x4, 0x80, 0x400
 	pRedrawWindow.Call(h, 0, 0, rdwInvalidate|rdwErase|rdwAllChildren|rdwFrame)
 }
+
+// openFilesDialog lets the user pick one or more files; paths are returned in full.
+func openFilesDialog(owner uintptr, filterName, pattern string) []string {
+	const ofnAllowMultiSelect = 0x200
+	filter := utf16.Encode([]rune(filterName + "\x00" + pattern + "\x00\x00"))
+	buf := make([]uint16, 1<<16)
+	ofn := OPENFILENAMEW{
+		HwndOwner:   owner,
+		LpstrFilter: &filter[0],
+		LpstrFile:   &buf[0],
+		NMaxFile:    uint32(len(buf)),
+		Flags:       OFN_EXPLORER | OFN_NOCHANGEDIR | OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | ofnAllowMultiSelect,
+	}
+	ofn.LStructSize = uint32(unsafe.Sizeof(ofn))
+	if r, _, _ := pGetOpenFileNameW.Call(uintptr(unsafe.Pointer(&ofn))); r == 0 {
+		return nil
+	}
+	// Explorer style: "dir\0name1\0name2\0\0", or a single full path "path\0\0".
+	var parts []string
+	start := 0
+	for i := 0; i < len(buf); i++ {
+		if buf[i] == 0 {
+			if i == start {
+				break
+			}
+			parts = append(parts, string(utf16.Decode(buf[start:i])))
+			start = i + 1
+		}
+	}
+	if len(parts) <= 1 {
+		return parts
+	}
+	dir := parts[0]
+	out := make([]string, 0, len(parts)-1)
+	for _, n := range parts[1:] {
+		out = append(out, dir+`\`+n)
+	}
+	return out
+}

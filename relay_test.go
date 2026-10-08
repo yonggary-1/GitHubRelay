@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -500,18 +501,133 @@ func TestSpecAndTexts(t *testing.T) {
 	// Every text renders without format errors in both languages.
 	for k, v := range texts {
 		for i, s := range v {
-			args := []any{}
+			byPos := map[int]any{}
+			pos, maxPos := 0, 0
 			for _, m := range verbRe.FindAllStringSubmatch(s, -1) {
-				if m[2] == "d" {
-					args = append(args, 1)
+				if m[1] != "" {
+					pos, _ = strconv.Atoi(strings.Trim(m[1], "[]"))
 				} else {
-					args = append(args, "x")
+					pos++
 				}
+				if m[2] == "d" {
+					byPos[pos] = 1
+				} else {
+					byPos[pos] = "x"
+				}
+				if pos > maxPos {
+					maxPos = pos
+				}
+			}
+			args := make([]any, maxPos)
+			for p, v := range byPos {
+				args[p-1] = v
 			}
 			out := T([]string{LangKO, LangEN}[i], k, args...)
 			if strings.Contains(out, "%!") {
 				t.Fatalf("%s[%d]: %s", k, i, out)
 			}
 		}
+	}
+}
+
+func TestNaturalOrder(t *testing.T) {
+	if !naturalLess("app-v0.9-bundle.zip", "app-v0.10-bundle.zip") || naturalLess("b", "a") {
+		t.Fatal("natural order")
+	}
+}
+
+func TestPreflightBatch(t *testing.T) {
+	dir := t.TempDir()
+	r := &RepoEntry{Owner: "me", Name: "app"}
+	find := func(repo string) *RepoEntry {
+		if r.KnownAs(repo) {
+			return r
+		}
+		return nil
+	}
+	write := func(name, repo, ver string) string {
+		p := filepath.Join(dir, name)
+		os.WriteFile(p, makeZip(t, goodBundle(repo, ver)), 0o644)
+		return p
+	}
+	// Named so that plain text order would be wrong (0.10 before 0.9).
+	ps := []string{write("app-v0.10.zip", "me/app", "0.10"), write("app-v0.9.zip", "me/app", "0.9"), write("x.zip", "me/app", "0.11")}
+	b := PreflightBatch(ps, find)
+	if b.Failed() || b.Repo != r {
+		t.Fatalf("preflight failed: %v", b.Checks)
+	}
+	got := []string{}
+	for _, it := range b.Items {
+		got = append(got, it.Version.String())
+	}
+	if strings.Join(got, ",") != "0.9,0.10,0.11" || b.NameOrderDiffers {
+		t.Fatalf("order %v differs=%v", got, b.NameOrderDiffers)
+	}
+	// File names that disagree with versions are flagged, versions still win.
+	ps2 := []string{write("a.zip", "me/app", "0.3"), write("b.zip", "me/app", "0.2")}
+	if b := PreflightBatch(ps2, find); !b.NameOrderDiffers || b.Items[0].Version.String() != "0.2" {
+		t.Fatal("name order")
+	}
+	// Duplicate versions, another repository, unregistered repository.
+	if b := PreflightBatch([]string{write("d1.zip", "me/app", "0.5"), write("d2.zip", "me/app", "0.5")}, find); !b.Failed() {
+		t.Fatal("duplicate accepted")
+	}
+	if b := PreflightBatch([]string{write("o1.zip", "me/app", "0.6"), write("o2.zip", "me/other", "0.7")}, find); !b.Failed() {
+		t.Fatal("mixed repositories accepted")
+	}
+	if b := PreflightBatch([]string{write("u.zip", "zz/zz", "0.1")}, find); !b.Failed() || b.Repo != nil {
+		t.Fatal("unregistered accepted")
+	}
+	// A bundle with a secret fails the whole batch before anything is uploaded.
+	g := goodBundle("me/app", "0.8")
+	g["src/k.txt"] = "ghp_" + strings.Repeat("a", 36)
+	sp := filepath.Join(dir, "s.zip")
+	os.WriteFile(sp, makeZip(t, g), 0o644)
+	if b := PreflightBatch([]string{write("ok.zip", "me/app", "0.7"), sp}, find); !b.Failed() {
+		t.Fatal("secret accepted")
+	}
+}
+
+// TestBatchSequence releases several bundles in order against the fake GitHub, as the UI does.
+func TestBatchSequence(t *testing.T) {
+	ctx := context.Background()
+	f := newFake("me", "app")
+	defer f.srv.Close()
+	gh := f.client()
+	dir := t.TempDir()
+	r := &RepoEntry{Owner: "me", Name: "app"}
+	var ps []string
+	for i, v := range []string{"0.3", "0.1", "0.2"} {
+		g := goodBundle("me/app", v)
+		g["src/main.go"] = "package main // " + v
+		p := filepath.Join(dir, fmt.Sprintf("b%d.zip", i))
+		os.WriteFile(p, makeZip(t, g), 0o644)
+		ps = append(ps, p)
+	}
+	b := PreflightBatch(ps, func(s string) *RepoEntry { return r })
+	for b.Next() >= 0 {
+		it := b.Items[b.Next()]
+		p := Analyze(ctx, gh, r, LoadBundle(it.Path, r.Full()))
+		if !p.CanUpload() {
+			fl, _ := levels(p.AllChecks())
+			t.Fatalf("%s: %v", it.Version, fl)
+		}
+		h := Upload(ctx, gh, p, false, noProg)
+		if h.Status != StSuccess {
+			t.Fatal(h.ErrorText("en"))
+		}
+		r.History = append([]*HistoryEntry{h}, r.History...)
+		it.State = BDone
+	}
+	// Dropping the same set again: every version is already released and is skipped, nothing fails.
+	for _, it := range b.Items {
+		p := Analyze(ctx, gh, r, LoadBundle(it.Path, r.Full()))
+		if !AlreadyReleased(p) {
+			fl, _ := levels(p.AllChecks())
+			t.Fatalf("re-run %s: %v", it.Version, fl)
+		}
+	}
+	if len(f.releases) != 3 || f.releases[0].TagName != "v0.1" || f.releases[2].TagName != "v0.3" || f.files()["main.go"] != "package main // 0.3" {
+		t.Fatalf("releases in wrong order")
 	}
 }

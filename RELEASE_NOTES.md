@@ -1,8 +1,12 @@
-## GitHub Relay v0.5
+## GitHub Relay v0.6
 
-- The Bundle spec tab starts with "(none)" again, so a spec is never made for the wrong repository by accident
-- A spec without a target marks `OWNER/REPO`, versions and file names as examples and tells the chat session to ask for the real values
-- A spec for a selected repository says at the top that it is only for that repository
-- New safety check: a bundle that shares almost no files with the target repository (other than README, LICENSE and similar) is blocked as possibly belonging to another project
+- Batch release: drop several bundle zips at once (or select several in Browse…) to release them one after another
+  - Every bundle is checked locally first (format, secrets, same repository, duplicate versions); nothing is uploaded if any fails
+  - Bundles are released in version order (`0.9` before `0.10`), with a notice when file names suggest a different order
+  - One confirmation starts the batch; each bundle is checked against GitHub right before its upload
+  - The batch stops at the first failure; bundles with warnings ask for confirmation, and declining pauses the batch
+  - Stop and Resume buttons; versions already on GitHub are skipped, so a stopped batch can be dropped again
+  - Double-click a bundle in the list to see its full check results
+- Batch jobs always publish immediately; the draft checkbox says it is disabled for batch jobs
 
 _Unofficial tool. Not made, endorsed, or supported by GitHub, Inc._

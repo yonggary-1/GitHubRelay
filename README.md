@@ -54,6 +54,10 @@ GitHub → Settings → Developer settings → Fine-grained tokens → Generate 
 
 The bundle is treated as a full snapshot: files that are not in the bundle are removed from the repository. GitHub Relay never force-pushes; if the branch changed after the check, the upload stops without changing anything.
 
+## Releasing many bundles at once (batch)
+
+Drop several bundle zips at once, or select several in **Browse…**. GitHub Relay first checks every bundle locally (format, secrets, same repository, no duplicate versions) and lists them in version order, so `v0.9` comes before `v0.10` whatever the file names are. Press **Start batch** once; each bundle is then checked against GitHub and released in turn. The batch stops at the first failure, and asks before uploading a bundle whose check shows a warning. Versions that are already released are skipped, so a stopped batch can be dropped again and resumed. Batch jobs always publish immediately; the draft option is disabled.
+
 ## Renaming a repository
 
 If you rename or transfer a repository on GitHub, GitHub Relay notices it on the next check or verification and offers to update the registration. The token, history and settings are kept. You can also type the new address and press **Change address** on the Repositories tab; this only works for the same repository. Bundles that still use the former name are accepted with a warning.
