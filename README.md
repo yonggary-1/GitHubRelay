@@ -21,8 +21,7 @@ Project page: https://github.com/yonggary-1/GitHubRelay
 
 - Windows 10 or Windows 11, 64-bit (x64)
 - Nothing to install: no .NET, no Visual C++ runtime, no git
-- Not supported: Windows 7, 8 and 8.1. The Go runtime the program is built with requires Windows 10 or later, so the program cannot start on older versions.
-- ARM64 Windows: no native build yet. Windows on ARM can usually run the x64 program through its built-in emulation, but this is untested. Native ARM64 and Windows 7/8 builds may be added once hardware is available for testing.
+- Not supported: Windows 7, 8 and 8.1
 
 ## Files
 
@@ -58,19 +57,6 @@ The bundle is treated as a full snapshot: files that are not in the bundle are r
 ## Releasing many bundles at once (batch)
 
 Drop several bundle zips at once, or select several in **Browse…**. GitHub Relay first checks every bundle locally (format, secrets, same repository, no duplicate versions) and lists them in version order, so `v0.9` comes before `v0.10` whatever the file names are. Press **Start batch** once; each bundle is then checked against GitHub and released in turn. The batch stops at the first failure, and asks before uploading a bundle whose check shows a warning. Versions that are already released are skipped, so a stopped batch can be dropped again and resumed. Batch jobs always publish immediately; the draft option is disabled.
-
-## Fixing a release
-
-On the History tab, select a version and use:
-
-- **Revert to this version**: restores the repository files to that release by adding a new commit on top. Nothing is erased from the history and nothing is force-pushed. You see the list of files that will change before you confirm.
-- **Delete release**: removes the release page, its attached files and its tag from GitHub. The source commit stays. The same version can be released again afterwards.
-
-To undo a bad release completely, revert to the previous version and then delete the bad release.
-
-## Update check
-
-At startup GitHub Relay checks the latest release of its own repository (no token needed) and tells you when a newer version exists. You can open the release page, be reminded next time, or skip that version. **Check for updates** at the bottom of the window checks on demand. GitHub Relay never downloads or replaces itself.
 
 ## Renaming a repository
 
