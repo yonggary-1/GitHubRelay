@@ -78,6 +78,10 @@ Choosing **Update now** downloads the new `GithubRelay.exe` next to the current 
 
 If you rename or transfer a repository on GitHub, GitHub Relay notices it on the next check or verification and offers to update the registration. The token, history and settings are kept. You can also type the new address and press **Change address** on the Manage repositories tab; this only works for the same repository. Bundles that still use the former name are accepted with a warning.
 
+## Design document
+
+The design and the reasons behind it (in Korean): [docs/DESIGN.ko.md](docs/DESIGN.ko.md)
+
 ## Building from source
 
 Requires Go 1.23 or newer. On any OS:
