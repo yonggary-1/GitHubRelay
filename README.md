@@ -60,7 +60,7 @@ Drop several bundle zips at once, or select several in **Browse…**. GitHub Rel
 
 ## Renaming a repository
 
-If you rename or transfer a repository on GitHub, GitHub Relay notices it on the next check or verification and offers to update the registration. The token, history and settings are kept. You can also type the new address and press **Change address** on the Repositories tab; this only works for the same repository. Bundles that still use the former name are accepted with a warning.
+If you rename or transfer a repository on GitHub, GitHub Relay notices it on the next check or verification and offers to update the registration. The token, history and settings are kept. You can also type the new address and press **Change address** on the Manage repositories tab; this only works for the same repository. Bundles that still use the former name are accepted with a warning.
 
 ## Building from source
 

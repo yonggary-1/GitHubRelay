@@ -221,7 +221,6 @@ func (a *App) stopBatch(key string, args ...any) {
 	a.setBusy(false)
 	a.setStatus(key, args...)
 	a.refreshRepos()
-	a.refreshRelRepos()
 	a.refreshHistory()
 	a.refreshSpec()
 	a.renderPlan()
@@ -330,7 +329,7 @@ func (a *App) batchAnalyzed(token string, i int, p *Plan) {
 				it.State = BDone
 				it.SetNote("batch.note_done", h.ReleaseURL)
 				a.lastRelURL = h.ReleaseURL
-				a.refreshRelRepos()
+				a.refreshRepos()
 				a.runBatchStep(token)
 			case StCommitted:
 				it.State = BFailed

@@ -980,6 +980,8 @@ func (a *App) refreshRepos() {
 		lvSelect(a.lvRepos, a.selRepo)
 	}
 	a.updateRepoButtons()
+	// The release tab shows the same repositories (latest version, token status); keep it in step.
+	a.refreshRelRepos()
 }
 
 func (a *App) updateRepoButtons() {
