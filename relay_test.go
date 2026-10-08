@@ -734,3 +734,112 @@ func TestDeleteAndRevert(t *testing.T) {
 		}
 	}
 }
+
+func TestRevertWithLaterAndDeleteLatest(t *testing.T) {
+	ctx := context.Background()
+	f := newFake("me", "app")
+	defer f.srv.Close()
+	gh := f.client()
+	r := &RepoEntry{Owner: "me", Name: "app"}
+	hs := map[string]*HistoryEntry{}
+	for _, v := range []string{"0.1", "0.2", "0.3", "0.4"} {
+		g := goodBundle("me/app", v)
+		g["src/main.go"] = "package main // " + v
+		p := Analyze(ctx, gh, r, LoadBundleBytes(makeZip(t, g), "me/app"))
+		h := Upload(ctx, gh, p, false, noProg)
+		if h.Status != StSuccess {
+			t.Fatal(h.ErrorText("en"))
+		}
+		r.History = append([]*HistoryEntry{h}, r.History...)
+		hs[v] = h
+	}
+
+	// Deleting a middle release: not latest, no revert offered.
+	dp, err := PlanDelete(ctx, gh, r, hs["0.2"])
+	if err != nil || dp.IsLatest || dp.Revert != nil {
+		t.Fatalf("middle delete plan: %v %+v", err, dp)
+	}
+
+	// Deleting the latest release offers reverting the code to the previous release.
+	dp, err = PlanDelete(ctx, gh, r, hs["0.4"])
+	if err != nil || !dp.IsLatest || dp.Previous == nil || dp.Previous.TagName != "v0.3" || dp.Revert == nil {
+		t.Fatalf("latest delete plan: %v %+v", err, dp)
+	}
+	rh := ExecuteRevert(ctx, gh, r, dp.Revert)
+	if rh.Status != StReverted {
+		t.Fatal(rh.ErrorText("en"))
+	}
+	if err := DeleteReleaseEntry(ctx, gh, r, hs["0.4"]); err != nil {
+		t.Fatal(err)
+	}
+	if f.files()["main.go"] != "package main // 0.3" || len(f.releases) != 3 {
+		t.Fatalf("after delete latest + revert: %q releases=%d", f.files()["main.go"], len(f.releases))
+	}
+
+	// Reverting to 0.1 lists 0.2 and 0.3 as later releases; deleting them leaves 0.1 as latest.
+	rp, err := PlanRevert(ctx, gh, r, hs["0.1"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rp.Later) != 2 || rp.Later[0].TagName != "v0.2" || rp.Later[1].TagName != "v0.3" {
+		t.Fatalf("later releases: %+v", rp.Later)
+	}
+	if h := ExecuteRevert(ctx, gh, r, rp); h.Status != StReverted {
+		t.Fatal(h.ErrorText("en"))
+	}
+	done, err := DeleteLaterReleases(ctx, gh, r, rp.Later)
+	if err != nil || len(done) != 2 {
+		t.Fatalf("delete later: %v", err)
+	}
+	for _, rel := range done {
+		MarkRemoved(r, rel)
+	}
+	if hs["0.2"].Status != StRemoved || hs["0.3"].Status != StRemoved || hs["0.1"].Status != StSuccess {
+		t.Fatal("history not marked")
+	}
+	if len(f.releases) != 1 || f.files()["main.go"] != "package main // 0.1" {
+		t.Fatalf("final state: releases=%d main=%q", len(f.releases), f.files()["main.go"])
+	}
+	// Now 0.2 can be released again, and the spec suggests 0.2.
+	if s := SpecFor(r); s.Next != "0.2" {
+		t.Fatalf("spec suggests %s", s.Next)
+	}
+	g := goodBundle("me/app", "0.2")
+	if p := Analyze(ctx, gh, r, LoadBundleBytes(makeZip(t, g), "me/app")); !p.CanUpload() {
+		fl, _ := levels(p.AllChecks())
+		t.Fatalf("0.2 again: %v", fl)
+	}
+	// Deleting the only release: latest, but nothing to revert to.
+	if dp, err := PlanDelete(ctx, gh, r, hs["0.1"]); err != nil || !dp.IsLatest || dp.Previous != nil || dp.Revert != nil {
+		t.Fatalf("only release: %v %+v", err, dp)
+	}
+}
+
+// TestTextArgs renders texts exactly as the UI calls them, in both languages.
+func TestTextArgs(t *testing.T) {
+	cases := []struct {
+		key  string
+		args []any
+	}{
+		{"del.confirm_latest", []any{"me/app", "0.7", "v0.7", "0.6.1", 1, 2, 3}},
+		{"del.confirm", []any{"me/app", "0.7", "v0.7"}},
+		{"rev.later_q", []any{"0.3", 2, "v0.4, v0.5"}},
+		{"rev.later_only_q", []any{"0.3", 2, "v0.4, v0.5"}},
+		{"rev.confirm", []any{"me/app", "0.3", "main", 1, 2, 3, "  x"}},
+		{"rev.later_failed", []any{1, 2, "err"}},
+		{"batch.confirm", []any{"me/app", 4, "0.1", "0.4", ""}},
+		{"confirm.upload", []any{"me/app", "0.1", "main", 1, 2, 3, 1, "x"}},
+	}
+	for _, c := range cases {
+		for _, l := range []string{LangKO, LangEN} {
+			s := T(l, c.key, c.args...)
+			if strings.Contains(s, "%!") {
+				t.Fatalf("%s/%s: %s", c.key, l, s)
+			}
+		}
+	}
+	ko := T(LangKO, "del.confirm_latest", "me/app", "0.7", "v0.7", "0.6.1", 1, 2, 3)
+	if strings.Count(ko, "0.6.1") != 3 || !strings.Contains(ko, "추가 1 · 수정 2 · 삭제 3") {
+		t.Fatal(ko)
+	}
+}
