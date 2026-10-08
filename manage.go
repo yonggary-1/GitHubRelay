@@ -108,6 +108,7 @@ type RevertPlan struct {
 	Added      int
 	Modified   int
 	Deleted    int
+	Later      []Release // releases newer than the target version, oldest first
 }
 
 // CanRevert: entries whose commit is known or can be found through their tag.
@@ -170,6 +171,13 @@ func PlanRevert(ctx context.Context, gh *GitHub, r *RepoEntry, h *HistoryEntry) 
 			rp.Changes = append(rp.Changes, Change{p, ChDeleted})
 			rp.Deleted++
 		}
+	}
+	if tv, err := ParseVersion(h.Version); err == nil {
+		rels, err := gh.ListReleases(ctx, r.Owner, r.Name)
+		if err != nil {
+			return nil, err
+		}
+		rp.Later = LaterReleases(rels, tv)
 	}
 	sort.Slice(rp.Changes, func(i, j int) bool {
 		if rp.Changes[i].Kind != rp.Changes[j].Kind {
@@ -260,4 +268,120 @@ func checkUpdateFor(ctx context.Context, gh *GitHub, owner, name, current string
 		return nil, nil
 	}
 	return &UpdateInfo{Version: v, URL: rel.HTMLURL}, nil
+}
+
+// ---------- releases around a version ----------
+
+// releaseVersion parses a release tag; ok is false for tags that are not versions.
+func releaseVersion(rel Release) (Version, bool) {
+	v, err := ParseVersion(rel.TagName)
+	return v, err == nil
+}
+
+// LaterReleases returns the releases with a version higher than v, oldest first.
+func LaterReleases(rels []Release, v Version) []Release {
+	var out []Release
+	for _, rel := range rels {
+		if rv, ok := releaseVersion(rel); ok && rv.Compare(v) > 0 {
+			out = append(out, rel)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		a, _ := releaseVersion(out[i])
+		b, _ := releaseVersion(out[j])
+		return a.Compare(b) < 0
+	})
+	return out
+}
+
+// PreviousRelease returns the highest published release below v, or nil.
+func PreviousRelease(rels []Release, v Version) *Release {
+	var best *Release
+	var bv Version
+	for i := range rels {
+		rel := rels[i]
+		rv, ok := releaseVersion(rel)
+		if !ok || rel.Draft || rv.Compare(v) >= 0 {
+			continue
+		}
+		if best == nil || rv.Compare(bv) > 0 {
+			best, bv = &rels[i], rv
+		}
+	}
+	return best
+}
+
+// DeleteGitHubRelease deletes a release and its tag.
+func DeleteGitHubRelease(ctx context.Context, gh *GitHub, r *RepoEntry, rel Release) error {
+	if err := gh.DeleteRelease(ctx, r.Owner, r.Name, rel.ID); err != nil && !IsStatus(err, 404) {
+		return err
+	}
+	if rel.TagName != "" {
+		return gh.DeleteTag(ctx, r.Owner, r.Name, rel.TagName)
+	}
+	return nil
+}
+
+// MarkRemoved updates the local history after a release was deleted.
+func MarkRemoved(r *RepoEntry, rel Release) {
+	for _, h := range r.History {
+		if (h.ReleaseID != 0 && h.ReleaseID == rel.ID) || (h.ReleaseID == 0 && strings.EqualFold(h.Tag, rel.TagName) && h.Status != StReverted) {
+			if h.Status == StSuccess || h.Status == StDraft || h.Status == StExternal {
+				h.Status = StRemoved
+				h.ReleaseURL = ""
+			}
+		}
+	}
+}
+
+// DeleteLaterReleases deletes releases one by one and returns the ones that were deleted.
+// It stops at the first error.
+func DeleteLaterReleases(ctx context.Context, gh *GitHub, r *RepoEntry, rels []Release) ([]Release, error) {
+	var done []Release
+	for _, rel := range rels {
+		if err := DeleteGitHubRelease(ctx, gh, r, rel); err != nil {
+			return done, err
+		}
+		done = append(done, rel)
+	}
+	return done, nil
+}
+
+// DeletePlan describes deleting one release, and whether it is the latest.
+type DeletePlan struct {
+	Entry    *HistoryEntry
+	IsLatest bool
+	Previous *Release    // highest release below the deleted one
+	Revert   *RevertPlan // reverting the code to Previous; nil when not latest or nothing would change
+}
+
+// PlanDelete checks whether the release is the latest and prepares an optional revert of the code.
+func PlanDelete(ctx context.Context, gh *GitHub, r *RepoEntry, h *HistoryEntry) (*DeletePlan, error) {
+	dp := &DeletePlan{Entry: h}
+	rels, err := gh.ListReleases(ctx, r.Owner, r.Name)
+	if err != nil {
+		return nil, err
+	}
+	v, err := ParseVersion(h.Version)
+	if err != nil {
+		return dp, nil // not a version: just delete it
+	}
+	dp.IsLatest = len(LaterReleases(rels, v)) == 0
+	if !dp.IsLatest {
+		return dp, nil
+	}
+	dp.Previous = PreviousRelease(rels, v)
+	if dp.Previous == nil {
+		return dp, nil
+	}
+	pv, _ := releaseVersion(*dp.Previous)
+	prev := &HistoryEntry{Version: pv.String(), Tag: dp.Previous.TagName, Status: StExternal}
+	rp, err := PlanRevert(ctx, gh, r, prev)
+	if err != nil {
+		return nil, err
+	}
+	if !rp.NoChange() {
+		dp.Revert = rp
+	}
+	return dp, nil
 }

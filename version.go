@@ -8,7 +8,7 @@ import (
 )
 
 // AppVersion is the version of GitHub Relay itself.
-const AppVersion = "0.7"
+const AppVersion = "0.8"
 
 // ProjectURL is GitHub Relay's own repository. It is only shown to the user
 // (About dialog); uploads always go to repositories the user registers.

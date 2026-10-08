@@ -9,7 +9,10 @@ import (
 	"time"
 )
 
-const mbDefButton2 = 0x100
+const (
+	mbDefButton2 = 0x100
+	mbDefButton3 = 0x200
+)
 
 // askCareful is a yes/no question whose default answer is No.
 func (a *App) askCareful(s string) bool {
@@ -28,35 +31,85 @@ func (a *App) onDeleteRelease() {
 	if !CanDeleteRelease(h) || a.busy {
 		return
 	}
-	if !a.askCareful(a.t("del.confirm", r.Full(), h.Version, h.Tag)) {
-		return
-	}
 	token, err := a.store.Token(r)
 	if err != nil {
 		a.warn(a.t("msg.need_token"))
 		return
 	}
-	cp := *h
+	cp := &RepoEntry{Owner: r.Owner, Name: r.Name, Branch: r.Branch}
+	target := *h
+	gh := NewGitHub(token)
 	a.setBusy(true)
-	a.setHist(func() string { return a.t("del.running", cp.Version) })
+	a.setHist(func() string { return a.t("del.checking", target.Version) })
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 		defer cancel()
-		err := DeleteReleaseEntry(ctx, NewGitHub(token), r, &cp)
+		dp, err := PlanDelete(ctx, gh, cp, &target)
 		a.post(func() {
-			a.setBusy(false)
 			if err != nil {
+				a.setBusy(false)
 				k, args := explainAPIError(err)
-				a.refreshHistory()
 				a.setHist(func() string { return a.t("st.failed", a.t(k, args...)) })
 				return
 			}
-			*h = cp
-			a.save()
-			a.refreshRepos()
-			a.refreshHistory()
-			a.refreshSpec()
-			a.setHist(func() string { return a.t("del.done", cp.Version) })
+			revert := false
+			if dp.Revert != nil {
+				pv := dp.Revert.Entry.Version
+				q := a.t("del.confirm_latest", r.Full(), target.Version, target.Tag, pv, dp.Revert.Added, dp.Revert.Modified, dp.Revert.Deleted)
+				switch msgBox(a.hwnd, q, "GitHub Relay", MB_YESNOCANCEL|MB_ICONWARNING|mbDefButton3) {
+				case IDYES:
+					revert = true
+				case IDNO:
+				default:
+					a.setBusy(false)
+					a.setHist(func() string { return "" })
+					return
+				}
+			} else if !a.askCareful(a.t("del.confirm", r.Full(), target.Version, target.Tag)) {
+				a.setBusy(false)
+				a.setHist(func() string { return "" })
+				return
+			}
+			a.uploading = true
+			a.setHist(func() string { return a.t("del.running", target.Version) })
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+				defer cancel()
+				var rh *HistoryEntry
+				if revert {
+					rh = ExecuteRevert(ctx, gh, cp, dp.Revert)
+				}
+				var derr error
+				if rh == nil || rh.Status == StReverted {
+					derr = DeleteReleaseEntry(ctx, gh, cp, &target)
+				}
+				a.post(func() {
+					a.uploading = false
+					a.setBusy(false)
+					if rh != nil {
+						r.History = append([]*HistoryEntry{rh}, r.History...)
+					}
+					switch {
+					case rh != nil && rh.Status != StReverted:
+						a.setHist(func() string { return a.t("del.revert_failed", rh.ErrorText(a.lang)) })
+					case derr != nil:
+						k, args := explainAPIError(derr)
+						a.setHist(func() string { return a.t("st.failed", a.t(k, args...)) })
+					default:
+						*h = target
+						if rh != nil {
+							pv := rh.Version
+							a.setHist(func() string { return a.t("del.done_reverted", target.Version, pv) })
+						} else {
+							a.setHist(func() string { return a.t("del.done", target.Version) })
+						}
+					}
+					a.save()
+					a.refreshRepos()
+					a.refreshHistory()
+					a.refreshSpec()
+				})
+			}()
 		})
 	}()
 }
@@ -80,12 +133,12 @@ func (a *App) onRevert() {
 	}
 	cp := &RepoEntry{Owner: r.Owner, Name: r.Name, Branch: r.Branch}
 	target := *h
+	gh := NewGitHub(token)
 	a.setBusy(true)
 	a.setHist(func() string { return a.t("rev.checking", target.Version) })
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 		defer cancel()
-		gh := NewGitHub(token)
 		rp, err := PlanRevert(ctx, gh, cp, &target)
 		a.post(func() {
 			if err != nil {
@@ -94,40 +147,82 @@ func (a *App) onRevert() {
 				a.setHist(func() string { return a.t("st.failed", a.t(k, args...)) })
 				return
 			}
-			if rp.NoChange() {
+			var later []string
+			for _, rel := range rp.Later {
+				later = append(later, rel.TagName)
+			}
+			if rp.NoChange() && len(rp.Later) == 0 {
 				a.setBusy(false)
 				a.setHist(func() string { return a.t("rev.same", target.Version) })
 				a.info(a.t("rev.same", target.Version))
 				return
 			}
-			var lines []string
-			for _, c := range rp.Changes {
-				k := map[ChangeKind]string{ChAdded: "ch.added", ChModified: "ch.modified", ChDeleted: "ch.deleted"}[c.Kind]
-				lines = append(lines, fmt.Sprintf("  %s  %s", a.t(k), c.Path))
+			doRevert := !rp.NoChange()
+			if doRevert {
+				var lines []string
+				for _, c := range rp.Changes {
+					k := map[ChangeKind]string{ChAdded: "ch.added", ChModified: "ch.modified", ChDeleted: "ch.deleted"}[c.Kind]
+					lines = append(lines, fmt.Sprintf("  %s  %s", a.t(k), c.Path))
+				}
+				q := a.t("rev.confirm", r.Full(), target.Version, rp.Branch, rp.Added, rp.Modified, rp.Deleted, strings.Join(limitList(lines, 15), "\n"))
+				if !a.askCareful(q) {
+					a.setBusy(false)
+					a.setHist(func() string { return "" })
+					return
+				}
 			}
-			q := a.t("rev.confirm", r.Full(), target.Version, rp.Branch, rp.Added, rp.Modified, rp.Deleted, strings.Join(limitList(lines, 15), "\n"))
-			if !a.askCareful(q) {
-				a.setBusy(false)
-				a.setHist(func() string { return "" })
-				return
+			deleteLater := false
+			if len(later) > 0 {
+				key := "rev.later_q"
+				if !doRevert {
+					key = "rev.later_only_q"
+				}
+				deleteLater = a.askCareful(a.t(key, target.Version, len(later), strings.Join(limitList(later, 20), ", ")))
+				if !doRevert && !deleteLater {
+					a.setBusy(false)
+					a.setHist(func() string { return "" })
+					return
+				}
 			}
 			a.uploading = true
 			a.setHist(func() string { return a.t("rev.running", target.Version) })
 			go func() {
-				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 				defer cancel()
-				res := ExecuteRevert(ctx, gh, cp, rp)
+				var res *HistoryEntry
+				if doRevert {
+					res = ExecuteRevert(ctx, gh, cp, rp)
+				}
+				var deleted []Release
+				var derr error
+				if deleteLater && (res == nil || res.Status == StReverted) {
+					deleted, derr = DeleteLaterReleases(ctx, gh, cp, rp.Later)
+				}
 				a.post(func() {
 					a.uploading = false
 					a.setBusy(false)
-					r.History = append([]*HistoryEntry{res}, r.History...)
+					if res != nil {
+						r.History = append([]*HistoryEntry{res}, r.History...)
+					}
+					for _, rel := range deleted {
+						MarkRemoved(r, rel)
+					}
 					a.save()
 					a.refreshRepos()
 					a.refreshHistory()
-					if res.Status == StReverted {
-						a.setHist(func() string { return a.t("rev.done", target.Version) })
-					} else {
+					a.refreshSpec()
+					switch {
+					case res != nil && res.Status != StReverted:
 						a.setHist(func() string { return a.t("st.failed", res.ErrorText(a.lang)) })
+					case derr != nil:
+						k, args := explainAPIError(derr)
+						n := len(deleted)
+						a.setHist(func() string { return a.t("rev.later_failed", n, len(later), a.t(k, args...)) })
+					case deleteLater:
+						n := len(deleted)
+						a.setHist(func() string { return a.t("rev.done_later", target.Version, n) })
+					default:
+						a.setHist(func() string { return a.t("rev.done", target.Version) })
 					}
 				})
 			}()
