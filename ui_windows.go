@@ -80,6 +80,7 @@ type App struct {
 
 	// history page
 	lblHistRepo, cbHistRepo, btnSync, btnHistOpen, btnHistCommit, btnRetry, lvHist, histStatus uintptr
+	btnDelRel, btnRevert, btnUpdate                                                            uintptr
 	histRows                                                                                   []*HistoryEntry
 
 	// spec page
@@ -375,6 +376,7 @@ func runApp() {
 	pShowWindow.Call(a.hwnd, SW_SHOW)
 	pUpdateWindow.Call(a.hwnd)
 	a.post(a.checkExpiry)
+	a.post(func() { a.checkUpdateAsync(false) })
 
 	var m MSG
 	for {
@@ -561,6 +563,8 @@ func (a *App) build() {
 		}
 	})
 	a.btnRetry = a.button(pgHistory, "btn.retry", a.onRetry)
+	a.btnRevert = a.button(pgHistory, "btn.revert", a.onRevert)
+	a.btnDelRel = a.button(pgHistory, "btn.del_release", a.onDeleteRelease)
 	a.lvHist = a.listView(pgHistory, []string{"col.time", "col.version", "col.status", "col.changes", "col.branch", "col.note"})
 	a.histStatus = a.wrapLabel(pgHistory, "")
 
@@ -575,6 +579,7 @@ func (a *App) build() {
 	// Footer
 	a.disclaimer = a.create("STATIC", SS_LEFT|SS_NOPREFIX|SS_CENTERIMAGE|SS_ENDELLIPSIS, 0, pgAll, "app.disclaimer", nil)
 	a.btnAbout = a.button(pgAll, "btn.about", a.onAbout)
+	a.btnUpdate = a.button(pgAll, "btn.update", func() { a.checkUpdateAsync(true) })
 
 	// The tab control must be below (created last, so moved here) every page control, or it paints over them.
 	pSetWindowPos.Call(a.tab, 1 /*HWND_BOTTOM*/, 0, 0, 0, 0, 0x1|0x2|SWP_NOACTIVATE)
@@ -733,7 +738,9 @@ func (a *App) layout() {
 	aboutW := a.btnW("btn.about")
 	fy := H - m - footH
 	move(a.btnAbout, W-m-aboutW, fy, aboutW, footH)
-	move(a.disclaimer, m, fy, W-3*m-aboutW, footH)
+	updW := a.btnW("btn.update")
+	move(a.btnUpdate, W-m-aboutW-a.s(8)-updW, fy, updW, footH)
+	move(a.disclaimer, m, fy, W-3*m-aboutW-a.s(8)-updW, footH)
 
 	// Tab
 	ty := m + hdrH + a.s(6)
@@ -856,7 +863,7 @@ func (a *App) layout() {
 	case pgHistory:
 		lblW := a.keyW("lbl.repo") + a.s(12)
 		cbW := a.s(320)
-		items := []item{{a.cbHistRepo, cbW}, {a.btnSync, a.btnW("btn.sync")}, {a.btnHistOpen, a.btnW("btn.openrelease")}, {a.btnHistCommit, a.btnW("btn.opencommit")}, {a.btnRetry, a.btnW("btn.retry")}}
+		items := []item{{a.cbHistRepo, cbW}, {a.btnSync, a.btnW("btn.sync")}, {a.btnHistOpen, a.btnW("btn.openrelease")}, {a.btnHistCommit, a.btnW("btn.opencommit")}, {a.btnRetry, a.btnW("btn.retry")}, {a.btnRevert, a.btnW("btn.revert")}, {a.btnDelRel, a.btnW("btn.del_release")}}
 		move(a.lblHistRepo, x0, y0, lblW, rowH)
 		y := a.flow(items, x0+lblW, y0, x1, rowH) + gap
 		move(a.cbHistRepo, x0+lblW, y0, cbW, a.s(300)) // combo needs its dropdown height
@@ -895,7 +902,7 @@ func (a *App) ask(s string) bool {
 
 func (a *App) setBusy(b bool) {
 	a.busy = b
-	for _, h := range []uintptr{a.btnRegister, a.btnReplace, a.btnVerify, a.btnEditAddr, a.btnRemove, a.btnBrowse, a.btnReanalyze, a.btnReset, a.btnSync, a.btnRetry, a.lvRelRepos, a.radKO, a.radEN} {
+	for _, h := range []uintptr{a.btnRegister, a.btnReplace, a.btnVerify, a.btnEditAddr, a.btnRemove, a.btnBrowse, a.btnReanalyze, a.btnReset, a.btnSync, a.btnRetry, a.btnRevert, a.btnDelRel, a.lvRelRepos, a.radKO, a.radEN} {
 		enable(h, !b)
 	}
 	if !b {
@@ -1068,6 +1075,8 @@ func (a *App) updateHistButtons() {
 	enable(a.btnHistOpen, h != nil && h.ReleaseURL != "")
 	enable(a.btnHistCommit, h != nil && h.CommitURL != "")
 	enable(a.btnRetry, h != nil && h.Status == StCommitted && !a.busy)
+	enable(a.btnRevert, CanRevert(h) && !a.busy)
+	enable(a.btnDelRel, CanDeleteRelease(h) && !a.busy)
 	enable(a.btnSync, comboRepo(a, a.cbHistRepo, 0) != nil && !a.busy)
 }
 

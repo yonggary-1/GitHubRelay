@@ -84,7 +84,8 @@ func (f *fakeGitHub) files() map[string]string {
 func (f *fakeGitHub) handle(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if r.Header.Get("Authorization") != "Bearer "+f.token {
+	public := r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/releases/latest")
+	if !public && r.Header.Get("Authorization") != "Bearer "+f.token {
 		f.errOut(w, 401, "Bad credentials")
 		return
 	}
@@ -139,7 +140,15 @@ func (f *fakeGitHub) handle(w http.ResponseWriter, r *http.Request) {
 			f.errOut(w, 404, "Not Found")
 			return
 		}
-		f.jsonOut(w, 200, map[string]any{"object": map[string]string{"sha": s}})
+		f.jsonOut(w, 200, map[string]any{"object": map[string]string{"sha": s, "type": "commit"}})
+	case strings.HasPrefix(p, "/git/refs/tags/") && r.Method == "DELETE":
+		ref := strings.TrimPrefix(p, "/git/refs/")
+		if _, ok := f.refs[ref]; !ok {
+			f.errOut(w, 422, "Reference does not exist")
+			return
+		}
+		delete(f.refs, ref)
+		w.WriteHeader(204)
 	case p == "/git/blobs" && r.Method == "POST":
 		if empty {
 			f.errOut(w, 409, "Git Repository is empty.")
@@ -244,6 +253,14 @@ func (f *fakeGitHub) handle(w http.ResponseWriter, r *http.Request) {
 		}
 		f.releases = append(f.releases, rel)
 		f.jsonOut(w, 201, rel.Release)
+	case p == "/releases/latest":
+		for i := len(f.releases) - 1; i >= 0; i-- {
+			if !f.releases[i].Draft {
+				f.jsonOut(w, 200, f.releases[i].Release)
+				return
+			}
+		}
+		f.errOut(w, 404, "Not Found")
 	case strings.HasPrefix(p, "/releases/"):
 		rest := strings.Split(strings.TrimPrefix(p, "/releases/"), "/")
 		id, _ := strconv.ParseInt(rest[0], 10, 64)
@@ -255,6 +272,17 @@ func (f *fakeGitHub) handle(w http.ResponseWriter, r *http.Request) {
 		}
 		if rel == nil {
 			f.errOut(w, 404, "Not Found")
+			return
+		}
+		if len(rest) == 1 && r.Method == "DELETE" {
+			out := f.releases[:0]
+			for _, x := range f.releases {
+				if x.ID != id {
+					out = append(out, x)
+				}
+			}
+			f.releases = out
+			w.WriteHeader(204)
 			return
 		}
 		if len(rest) == 1 {

@@ -74,7 +74,9 @@ func (g *GitHub) do(ctx context.Context, method, fullURL string, body any, conte
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	req.Header.Set("User-Agent", "GitHub-Relay/"+AppVersion)
-	req.Header.Set("Authorization", "Bearer "+g.Token)
+	if g.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+g.Token)
+	}
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
 	}

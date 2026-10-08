@@ -36,6 +36,8 @@ const (
 	StCommitted = "committed" // commit pushed, release missing or incomplete
 	StDeleted   = "deleted"   // release no longer exists on GitHub
 	StExternal  = "external"  // release found on GitHub, not made by this program
+	StRemoved   = "removed"   // release and tag deleted with this program (commit kept)
+	StReverted  = "reverted"  // files restored to an earlier release by a new commit
 )
 
 type HistoryEntry struct {
@@ -82,6 +84,8 @@ type Data struct {
 	Repos    []*RepoEntry `json:"repos"`
 	// LastRepo is the repository last selected on the release page.
 	LastRepo string `json:"last_repo,omitempty"`
+	// SkipUpdate is a newer version the user chose not to be told about again.
+	SkipUpdate string `json:"skip_update,omitempty"`
 	// Archived keeps history of removed repositories, keyed by lower-case owner/name.
 	Archived map[string][]*HistoryEntry `json:"archived,omitempty"`
 }
