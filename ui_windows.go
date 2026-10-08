@@ -993,9 +993,6 @@ func (a *App) refreshCombos() {
 		if cur < 0 || cur >= n {
 			cur = 0
 		}
-		if withNone && !a.specPicked && len(a.store.D.Repos) > 0 {
-			cur = 1 // default to the first registered repository
-		}
 		if n > 0 {
 			send(cb, CB_SETCURSEL, uintptr(cur), 0)
 		}

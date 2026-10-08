@@ -54,6 +54,11 @@ func specKO(repo, ver, prev, name, example string, unknown bool) string {
 	var b strings.Builder
 	w := func(s string, a ...any) { fmt.Fprintf(&b, s, a...) }
 	w("# GitHub Relay 번들 규격 v%d\n\n", SpecVersion)
+	if unknown {
+		w("> **이 문서는 특정 리포지터리용이 아니다.** 문서에 나오는 `OWNER/REPO`, 버전, 파일 이름은 모두 **예시**다. 실제 값은 사용자에게 확인할 것.\n\n")
+	} else {
+		w("> **이 문서는 `%s` 전용이다.** 다른 리포지터리의 번들에는 쓰지 말 것.\n\n", repo)
+	}
 	w("이 문서는 개발 결과물을 GitHub에 올리기 위한 **릴리즈 번들(zip)** 형식이다. ")
 	w("너(채팅 세션)는 GitHub에 직접 접속하거나 토큰을 다루지 않는다. 이 규격대로 zip 파일 하나만 만들어 사용자에게 전달하면, 사용자의 PC에서 GitHub Relay가 검수한 뒤 업로드한다. 규격을 하나라도 어기면 업로드가 거부된다.\n\n")
 	w("## 이번 릴리즈 정보\n\n")
@@ -81,10 +86,18 @@ func specKO(repo, ver, prev, name, example string, unknown bool) string {
 	w("└─ dist/                    선택. 릴리즈에 첨부할 빌드 결과물\n```\n\n")
 	w("- zip 최상위에 위 항목이 바로 보여야 한다. (폴더 하나로 감싼 zip도 허용)\n")
 	w("- README와 RELEASE_NOTES 파일은 업로드 시 리포지터리 **루트**에 커밋된다. 같은 이름의 파일을 `src/` 안에 두면 안 된다.\n\n")
-	w("## release.json\n\n```json\n%s\n```\n\n", example)
+	w("## release.json\n\n")
+	if unknown {
+		w("아래 값은 **예시**다.\n\n")
+	}
+	w("```json\n%s\n```\n\n", example)
 	w("| 항목 | 필수 | 설명 |\n| --- | --- | --- |\n")
 	w("| spec_version | 필수 | 항상 `%d` |\n", SpecVersion)
-	w("| repo | 필수 | `소유자/이름`. 반드시 `%s` |\n", repo)
+	if unknown {
+		w("| repo | 필수 | `소유자/이름`. 사용자에게 확인받은 실제 주소 (`OWNER/REPO`는 예시) |\n")
+	} else {
+		w("| repo | 필수 | `소유자/이름`. 반드시 `%s` |\n", repo)
+	}
 	w("| version | 필수 | 숫자 두 자리(`0.1`) 또는 세 자리(`0.1.1`). 앞에 v를 붙이지 않는다 |\n")
 	w("| tag | 선택 | 생략하면 `v` + version |\n")
 	w("| title | 선택 | 릴리즈 제목. 생략하면 태그 |\n")
@@ -138,6 +151,11 @@ func specEN(repo, ver, prev, name, example string, unknown bool) string {
 	var b strings.Builder
 	w := func(s string, a ...any) { fmt.Fprintf(&b, s, a...) }
 	w("# GitHub Relay Bundle Spec v%d\n\n", SpecVersion)
+	if unknown {
+		w("> **This document is not for a specific repository.** `OWNER/REPO`, versions and file names in it are **examples**. Ask the user for the real values.\n\n")
+	} else {
+		w("> **This document is only for `%s`.** Do not use it for bundles of other repositories.\n\n", repo)
+	}
 	w("This document defines the **release bundle (zip)** used to publish your work to GitHub. ")
 	w("You (the chat session) never connect to GitHub or handle tokens. Produce exactly one zip file that follows this spec and hand it to the user; GitHub Relay on the user's PC reviews it and uploads it. Any violation makes the upload fail.\n\n")
 	w("## This release\n\n")
@@ -165,10 +183,18 @@ func specEN(repo, ver, prev, name, example string, unknown bool) string {
 	w("└─ dist/                    optional. Build outputs attached to the release\n```\n\n")
 	w("- The items above must sit at the top of the zip. (A zip that wraps everything in one folder is also accepted.)\n")
 	w("- README and RELEASE_NOTES files are committed to the repository **root**. Do not put files with the same names inside `src/`.\n\n")
-	w("## release.json\n\n```json\n%s\n```\n\n", example)
+	w("## release.json\n\n")
+	if unknown {
+		w("The values below are **examples**.\n\n")
+	}
+	w("```json\n%s\n```\n\n", example)
 	w("| Field | Required | Description |\n| --- | --- | --- |\n")
 	w("| spec_version | yes | Always `%d` |\n", SpecVersion)
-	w("| repo | yes | `owner/name`. Must be `%s` |\n", repo)
+	if unknown {
+		w("| repo | yes | `owner/name`. The real address confirmed by the user (`OWNER/REPO` is an example) |\n")
+	} else {
+		w("| repo | yes | `owner/name`. Must be `%s` |\n", repo)
+	}
 	w("| version | yes | Two numbers (`0.1`) or three (`0.1.1`). No leading v |\n")
 	w("| tag | no | Defaults to `v` + version |\n")
 	w("| title | no | Release title. Defaults to the tag |\n")

@@ -234,6 +234,22 @@ func Analyze(ctx context.Context, gh *GitHub, r *RepoEntry, b *Bundle) *Plan {
 		}
 		return p.Changes[i].Path < p.Changes[j].Path
 	})
+	// A bundle for another project shares (almost) no files with this repository.
+	if !empty {
+		core, common := 0, 0
+		for path := range p.Existing {
+			if isBoilerplate(path) {
+				continue
+			}
+			core++
+			if inBundle[path] {
+				common++
+			}
+		}
+		if core >= 5 && float64(common) < float64(core)*unrelatedRatio {
+			p.add(Fail, "chk.unrelated", common, core)
+		}
+	}
 	if p.Added+p.Modified+p.Deleted == 0 {
 		p.add(Warn, "chk.no_changes")
 	}
@@ -539,4 +555,21 @@ func VerifyToken(ctx context.Context, gh *GitHub, owner, name string) *RegisterR
 	add(Pass, "reg.write_ok")
 	res.State = TokOK
 	return res
+}
+
+// unrelatedRatio: below this share of common files, a bundle is treated as another project's.
+const unrelatedRatio = 0.2
+
+// isBoilerplate reports root files that almost every project has, which say nothing about identity.
+func isBoilerplate(p string) bool {
+	if strings.Contains(p, "/") {
+		return false
+	}
+	l := strings.ToLower(p)
+	for _, pre := range []string{"readme", "release_notes", "license", "licence", "changelog", ".gitignore", ".gitattributes", ".editorconfig"} {
+		if strings.HasPrefix(l, pre) {
+			return true
+		}
+	}
+	return false
 }

@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -400,6 +401,39 @@ func TestRename(t *testing.T) {
 	}
 }
 
+func TestUnrelatedBundle(t *testing.T) {
+	ctx := context.Background()
+	f := newFake("me", "app")
+	defer f.srv.Close()
+	gh := f.client()
+	r := &RepoEntry{Owner: "me", Name: "app"}
+	g := goodBundle("me/app", "0.1")
+	for i := 0; i < 6; i++ {
+		g[fmt.Sprintf("src/app%d.go", i)] = "package app"
+	}
+	if h := Upload(ctx, gh, Analyze(ctx, gh, r, LoadBundleBytes(makeZip(t, g), "me/app")), false, noProg); h.Status != StSuccess {
+		t.Fatal(h.ErrorText("en"))
+	}
+	o := goodBundle("me/app", "0.2")
+	delete(o, "src/main.go")
+	for i := 0; i < 6; i++ {
+		o[fmt.Sprintf("src/other%d.py", i)] = "print()"
+	}
+	p := Analyze(ctx, gh, r, LoadBundleBytes(makeZip(t, o), "me/app"))
+	if fl, _ := levels(p.Checks); p.CanUpload() || !strings.Contains(strings.Join(fl, ","), "chk.unrelated") {
+		t.Fatalf("unrelated bundle not blocked: %v", fl)
+	}
+	u := goodBundle("me/app", "0.2")
+	for i := 0; i < 6; i++ {
+		u[fmt.Sprintf("src/app%d.go", i)] = "package app // v2"
+	}
+	u["src/new.go"] = "package app"
+	if p := Analyze(ctx, gh, r, LoadBundleBytes(makeZip(t, u), "me/app")); !p.CanUpload() {
+		fl, _ := levels(p.AllChecks())
+		t.Fatalf("normal update blocked: %v", fl)
+	}
+}
+
 func TestStore(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "GithubRelay.dat")
@@ -453,6 +487,9 @@ func TestSpecAndTexts(t *testing.T) {
 		if !strings.Contains(s, "OWNER/REPO") || strings.Contains(s, "%!") {
 			t.Fatal("spec without target")
 		}
+	}
+	if !strings.Contains(SpecMarkdown(LangKO, nil), "**예시**") || !strings.Contains(SpecMarkdown(LangEN, &SpecTarget{Repo: "me/app", Next: "0.1"}), "only for `me/app`") {
+		t.Fatal("example / dedicated labels missing")
 	}
 	if !strings.Contains(SpecMarkdown(LangKO, nil), "추측하지 말고") || !strings.Contains(SpecMarkdown(LangEN, nil), "Do not guess") {
 		t.Fatal("no-guess instruction missing")

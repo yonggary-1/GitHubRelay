@@ -232,6 +232,7 @@ var texts = map[string][2]string{
 	"chk.secrets_ok":        {"토큰·키 등 비밀 정보 없음", "No tokens, keys or other secrets"},
 	"chk.renamed":           {"리포지터리 주소가 바뀌었습니다: %v → %v. 등록 정보를 업데이트해야 합니다", "The repository moved: %v → %v. The registration must be updated"},
 	"chk.repo_former":       {"번들이 이 리포의 이전 이름(%v)을 가리킵니다. 같은 리포이므로 현재 이름(%v)으로 올립니다", "The bundle uses this repository's former name (%v). It is the same repository and will be uploaded as %v"},
+	"chk.unrelated":         {"이 리포의 기존 파일과 거의 겹치지 않습니다 (공통 %v / 기존 %v개). 다른 프로젝트의 번들일 수 있어 막았습니다. 대상 리포지터리가 맞는지 확인하세요", "This bundle shares almost no files with the repository (%v of %v in common). It may belong to another project, so it was blocked. Check the target repository"},
 	"chk.archived":          {"보관(archived)된 리포지터리라 올릴 수 없습니다", "The repository is archived and read-only"},
 	"chk.empty_branch":      {"빈 리포지터리의 첫 업로드는 기본 브랜치(%[2]v)로만 가능합니다. 등록된 브랜치: %[1]v", "The first upload to an empty repository must go to its default branch (%[2]v). Registered branch: %[1]v"},
 	"chk.empty_repo":        {"빈 리포지터리: 첫 커밋을 만든 뒤 %v 브랜치에 올립니다", "Empty repository: a first commit will be created on %v"},
