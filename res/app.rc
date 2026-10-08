@@ -3,8 +3,8 @@
 1 24 "app.manifest"
 
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION 0,8,0,0
-PRODUCTVERSION 0,8,0,0
+FILEVERSION 0,7,0,0
+PRODUCTVERSION 0,7,0,0
 FILEOS 0x40004L
 FILETYPE 0x1L
 BEGIN
@@ -15,12 +15,12 @@ BEGIN
       VALUE "CompanyName", "Yonggary"
       VALUE "Comments", "https://github.com/yonggary-1/GitHubRelay"
       VALUE "FileDescription", "GitHub Relay (unofficial, not affiliated with GitHub, Inc.)"
-      VALUE "FileVersion", "0.8"
+      VALUE "FileVersion", "0.7"
       VALUE "InternalName", "GithubRelay"
       VALUE "LegalCopyright", "MIT License"
       VALUE "OriginalFilename", "GithubRelay.exe"
       VALUE "ProductName", "GitHub Relay"
-      VALUE "ProductVersion", "0.8"
+      VALUE "ProductVersion", "0.7"
     END
   END
   BLOCK "VarFileInfo"

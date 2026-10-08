@@ -1,8 +1,8 @@
-## GitHub Relay v0.8
+## GitHub Relay v0.7
 
-- **Revert to this version** now lists the releases published after that version and asks whether to delete them too. Deleting them lets you continue from the reverted version (for example, release 0.4 again after reverting to 0.3)
-- **Delete release** on the latest release offers to revert the code to the previous release at the same time: [Yes] delete and revert, [No] delete only, [Cancel] do nothing
-- If reverting the code fails, the release is not deleted
-- README explains the difference between the code and the releases, and that the order of reverting and deleting does not matter
+- **Revert to this version** (History tab): restores the repository files to an earlier release by adding a new commit. History is never rewritten and nothing is force-pushed; the files that will change are listed before you confirm
+- **Delete release** (History tab): removes a release, its attached files and its tag from GitHub while keeping the source commit. The same version can be released again
+- **Update check**: at startup GitHub Relay checks its own repository for a newer release (no token needed) and offers to open the release page, remind you later, or skip that version. A "Check for updates" button checks on demand. Nothing is downloaded automatically
+- README: explains why only Windows 10/11 x64 is supported and the status of ARM64 and Windows 7/8
 
 _Unofficial tool. Not made, endorsed, or supported by GitHub, Inc._

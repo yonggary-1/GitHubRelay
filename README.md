@@ -63,10 +63,10 @@ Drop several bundle zips at once, or select several in **Browse…**. GitHub Rel
 
 On the History tab, select a version and use:
 
-- **Revert to this version**: restores the repository *code* to that release by adding a new commit on top. Nothing is erased from the history and nothing is force-pushed. You see the list of files that will change before you confirm. Releases are not touched, so the "Latest" release stays the same. If newer releases exist, GitHub Relay asks whether to delete them too.
-- **Delete release**: removes the release page, its attached files and its tag from GitHub. The code stays. When you delete the latest release, GitHub Relay offers to revert the code to the previous release at the same time.
+- **Revert to this version**: restores the repository files to that release by adding a new commit on top. Nothing is erased from the history and nothing is force-pushed. You see the list of files that will change before you confirm.
+- **Delete release**: removes the release page, its attached files and its tag from GitHub. The source commit stays. The same version can be released again afterwards.
 
-A repository has two faces that move separately: the code (Code tab) and the releases (downloads). Reverting changes only the code; deleting changes only the releases. Doing both, in either order, undoes a bad release completely. A new version must always be higher than the highest release left on GitHub.
+To undo a bad release completely, revert to the previous version and then delete the bad release.
 
 ## Update check
 
