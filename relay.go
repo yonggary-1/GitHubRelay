@@ -451,7 +451,7 @@ func Sync(ctx context.Context, gh *GitHub, r *RepoEntry) error {
 	}
 	known := map[string]bool{}
 	for _, h := range r.History {
-		if h.Status == StFailed {
+		if h.Status == StFailed || h.Status == StReverted || h.Status == StRemoved {
 			continue
 		}
 		rel, ok := byID[h.ReleaseID]

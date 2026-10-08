@@ -631,3 +631,106 @@ func TestBatchSequence(t *testing.T) {
 		t.Fatalf("releases in wrong order")
 	}
 }
+
+func TestDeleteAndRevert(t *testing.T) {
+	ctx := context.Background()
+	f := newFake("me", "app")
+	defer f.srv.Close()
+	gh := f.client()
+	r := &RepoEntry{Owner: "me", Name: "app"}
+	up := func(ver string, mod func(map[string]string)) *HistoryEntry {
+		g := goodBundle("me/app", ver)
+		if mod != nil {
+			mod(g)
+		}
+		p := Analyze(ctx, gh, r, LoadBundleBytes(makeZip(t, g), "me/app"))
+		if !p.CanUpload() {
+			fl, _ := levels(p.AllChecks())
+			t.Fatalf("%s: %v", ver, fl)
+		}
+		h := Upload(ctx, gh, p, false, noProg)
+		if h.Status != StSuccess {
+			t.Fatal(h.ErrorText("en"))
+		}
+		r.History = append([]*HistoryEntry{h}, r.History...)
+		return h
+	}
+	h1 := up("0.1", nil)
+	h2 := up("0.2", func(g map[string]string) {
+		g["src/main.go"] = "package main // broken"
+		g["src/extra.go"] = "package main"
+		delete(g, "src/LICENSE")
+	})
+
+	// Revert to 0.1: one new commit, files equal to 0.1, release 0.2 untouched.
+	rp, err := PlanRevert(ctx, gh, r, h1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rp.Added != 1 || rp.Modified < 1 || rp.Deleted != 1 || rp.NoChange() {
+		t.Fatalf("revert plan a=%d m=%d d=%d", rp.Added, rp.Modified, rp.Deleted)
+	}
+	rh := ExecuteRevert(ctx, gh, r, rp)
+	if rh.Status != StReverted || rh.CommitSHA == "" {
+		t.Fatal(rh.ErrorText("en"))
+	}
+	r.History = append([]*HistoryEntry{rh}, r.History...)
+	files := f.files()
+	if files["main.go"] != "package main\n" || files["LICENSE"] != "MIT" || files["extra.go"] != "" || len(f.releases) != 2 {
+		t.Fatalf("files after revert: %v", files)
+	}
+	if f.commits[rh.CommitSHA][1] != h2.CommitSHA {
+		t.Fatal("revert must add a commit on top, not rewrite history")
+	}
+	// Reverting again to the same state changes nothing.
+	if rp, _ := PlanRevert(ctx, gh, r, h1); !rp.NoChange() {
+		t.Fatal("second revert should be empty")
+	}
+	// A revert through the tag only (release made elsewhere).
+	ext := &HistoryEntry{Version: "0.2", Tag: "v0.2", Status: StExternal}
+	if rp, err := PlanRevert(ctx, gh, r, ext); err != nil || rp.TargetSHA != h2.CommitSHA {
+		t.Fatalf("revert by tag: %v", err)
+	}
+
+	// Delete release 0.2: release and tag go, the commit stays.
+	if !CanDeleteRelease(h2) || CanDeleteRelease(rh) {
+		t.Fatal("CanDeleteRelease")
+	}
+	if err := DeleteReleaseEntry(ctx, gh, r, h2); err != nil {
+		t.Fatal(err)
+	}
+	if h2.Status != StRemoved || len(f.releases) != 1 || f.refs["tags/v0.2"] != "" {
+		t.Fatalf("delete: %s releases=%d", h2.Status, len(f.releases))
+	}
+	if _, ok := f.commits[h2.CommitSHA]; !ok {
+		t.Fatal("commit must stay")
+	}
+	// Sync keeps the removed and reverted entries as they are.
+	if err := Sync(ctx, gh, r); err != nil {
+		t.Fatal(err)
+	}
+	if h2.Status != StRemoved || rh.Status != StReverted || h1.Status != StSuccess {
+		t.Fatalf("sync changed statuses: %s %s %s", h2.Status, rh.Status, h1.Status)
+	}
+	// After deleting 0.2, version 0.2 can be released again.
+	up("0.2", func(g map[string]string) { g["src/main.go"] = "package main // fixed" })
+	if f.files()["main.go"] != "package main // fixed" {
+		t.Fatal("re-release")
+	}
+
+	// Update check reads the latest public release without a token.
+	pub := f.client()
+	pub.Token = ""
+	rel, err := pub.LatestRelease(ctx, "me", "app")
+	if err != nil || rel.TagName != "v0.2" {
+		t.Fatalf("latest without token: %v", err)
+	}
+	if u, err := checkUpdateFor(ctx, pub, "me", "app", "0.1.5"); err != nil || u == nil || u.Version.String() != "0.2" {
+		t.Fatalf("update not found: %v", err)
+	}
+	for _, cur := range []string{"0.2", "0.2.0", "0.10"} {
+		if u, err := checkUpdateFor(ctx, pub, "me", "app", cur); err != nil || u != nil {
+			t.Fatalf("false update for %s", cur)
+		}
+	}
+}
